@@ -1,0 +1,20 @@
+models:
+  defaults:
+    timeout: 120
+    max_retries: 2
+
+  requirements:
+    model: anthropic/claude-sonnet-4-5
+    api_base: https://requirements-gateway.example/v1
+    api_key_env: REQUIREMENTS_API_KEY
+
+  code:
+    model: openai/gpt-5
+    api_base: https://code-gateway.example/v1
+    api_key_env: CODE_MODEL_API_KEY
+    timeout: 180
+
+  fix:
+    model: ollama/qwen2.5-coder
+    api_base: http://localhost:11434
+    max_retries: 1

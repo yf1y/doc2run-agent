@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "code-agent-workflow"
+version = "0.1.0"
+description = "A LangGraph workflow that plans, generates, runs, and repairs Python code with local RAG."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "httpx>=0.28,<1.0",
+  "langgraph>=1.0,<2.0",
+  "litellm>=1.75,<2.0",
+  "pydantic>=2.10,<3.0",
+  "python-dotenv>=1.0,<2.0",
+  "pyyaml>=6.0,<7.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3,<10",
+]
+
+[project.scripts]
+code-agent = "code_agent.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/code_agent", "src/code_agent_demo_sdk"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
