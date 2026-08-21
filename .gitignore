@@ -18,7 +18,7 @@ venv/
 .env
 .env.*
 !.env.example
-code_agent.yaml
+doc2run_agent.yaml
 
 # Runtime artifacts
 sessions/

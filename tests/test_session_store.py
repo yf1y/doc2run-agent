@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from code_agent.schemas import InputSpec, OutputSpec
-from code_agent.session_store import FileSessionStore
+from doc2run_agent.schemas import InputSpec, OutputSpec
+from doc2run_agent.session_store import FileSessionStore
 
 
 def test_session_round_trip(tmp_path):

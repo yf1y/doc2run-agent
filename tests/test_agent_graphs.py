@@ -1,10 +1,10 @@
 import json
 
-from code_agent.code_agent import build_code_agent_graph
-from code_agent.fix_agent import build_fix_agent_graph
-from code_agent.knowledge_tools import KnowledgeSearchTool
-from code_agent.retriever import LocalKnowledgeBase
-from code_agent.schemas import TaskSpec
+from doc2run_agent.generation_agent import build_generation_agent_graph
+from doc2run_agent.fix_agent import build_fix_agent_graph
+from doc2run_agent.knowledge_tools import KnowledgeSearchTool
+from doc2run_agent.retriever import LocalKnowledgeBase
+from doc2run_agent.schemas import TaskSpec
 
 from conftest import FakeModel
 
@@ -24,9 +24,9 @@ def task_spec():
     ).model_dump(mode="json")
 
 
-def test_code_agent_subgraph_retrieves_generates_and_validates(tmp_path):
+def test_generation_agent_subgraph_retrieves_generates_and_validates(tmp_path):
     model = FakeModel([json.dumps({"queries": ["JSON serialization"]}), "import json\nprint(json.dumps({'ok': True}))"])
-    graph = build_code_agent_graph(model, make_tool(tmp_path))
+    graph = build_generation_agent_graph(model, make_tool(tmp_path))
 
     result = graph.invoke({"task_spec": task_spec()})
 

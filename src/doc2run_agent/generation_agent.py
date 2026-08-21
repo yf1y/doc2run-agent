@@ -11,7 +11,7 @@ from .schemas import OrchestratorState, RetrievalQueryPlan, TaskSpec
 from .validation import validate_code
 
 
-def build_code_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool):
+def build_generation_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool):
     def plan_retrieval(state: OrchestratorState) -> dict[str, object]:
         plan = parse_model(
             model.complete(RETRIEVAL_PLAN_SYSTEM, retrieval_plan_request(state["task_spec"])),
@@ -28,7 +28,7 @@ def build_code_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool
             model.complete(CODE_SYSTEM, code_request(state["task_spec"], state["retrieved_context"]))
         )
         if not code:
-            raise ValueError("Code Agent returned empty code")
+            raise ValueError("Generation Agent returned empty code")
         return {"code": code, "status": "generated", "fix_attempts": 0}
 
     def validate(state: OrchestratorState) -> dict[str, object]:

@@ -1,4 +1,4 @@
-from code_agent.runner import LocalPythonRunner, sanitize_code
+from doc2run_agent.runner import LocalPythonRunner, sanitize_code
 
 
 def test_runner_executes_code_and_captures_stdout():

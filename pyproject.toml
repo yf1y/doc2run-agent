@@ -3,7 +3,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "code-agent-workflow"
+name = "doc2run-agent"
 version = "0.1.0"
 description = "A LangGraph workflow that plans, generates, runs, and repairs Python code with local RAG."
 readme = "README.md"
@@ -23,10 +23,10 @@ dev = [
 ]
 
 [project.scripts]
-code-agent = "code_agent.cli:main"
+doc2run-agent = "doc2run_agent.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/code_agent", "src/code_agent_demo_sdk"]
+packages = ["src/doc2run_agent", "src/doc2run_demo_sdk"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

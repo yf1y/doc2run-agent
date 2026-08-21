@@ -8,7 +8,7 @@ from typing import Callable
 from .config import load_agent_model_settings
 from .knowledge_tools import KnowledgeSearchTool
 from .llm import AgentModels, TextModel, create_agent_models
-from .orchestrator import CodeAgentOrchestrator
+from .orchestrator import Doc2RunOrchestrator
 from .retriever import LocalKnowledgeBase
 from .runner import LocalPythonRunner
 from .schemas import SessionRecord
@@ -27,13 +27,13 @@ HELP_TEXT = """Commands:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Interactive documentation-grounded Python Code Agent."
+        description="Doc2Run Agent: turn private documentation into verified Python automations."
     )
     parser.add_argument("--session", default="default", help="Persistent session identifier")
     parser.add_argument(
         "--config",
         type=Path,
-        help="YAML model configuration; defaults to ./code_agent.yaml when present",
+        help="YAML model configuration; defaults to ./doc2run_agent.yaml when present",
     )
     parser.add_argument("--sessions-dir", type=Path, default=Path("sessions"))
     parser.add_argument("--knowledge-dir", type=Path, default=Path("knowledge"))
@@ -71,7 +71,7 @@ def run_chat(
 ) -> None:
     store = FileSessionStore(sessions_directory)
     knowledge = LocalKnowledgeBase.from_directory(knowledge_directory)
-    orchestrator = CodeAgentOrchestrator(
+    orchestrator = Doc2RunOrchestrator(
         models,
         KnowledgeSearchTool(knowledge, top_k=top_k),
         store,

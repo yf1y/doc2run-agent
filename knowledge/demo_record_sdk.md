@@ -1,12 +1,12 @@
 # Demo Record SDK
 
-The package `code_agent_demo_sdk` represents a neutral private Python SDK. It is
+The package `doc2run_demo_sdk` represents a neutral private Python SDK. It is
 installed together with this project and requires no credentials or network.
 
 ## Client
 
 ```python
-from code_agent_demo_sdk import RecordClient
+from doc2run_demo_sdk import RecordClient
 
 client = RecordClient("demo_records.json")
 ```

@@ -5,7 +5,7 @@ from typing import Any, Literal
 from langgraph.graph import END, START, StateGraph
 
 from .artifacts import ArtifactManager
-from .code_agent import build_code_agent_graph
+from .generation_agent import build_generation_agent_graph
 from .errors import classify_failure
 from .fix_agent import build_fix_agent_graph
 from .knowledge_tools import KnowledgeSearchTool
@@ -16,7 +16,7 @@ from .schemas import CodeValidation, OrchestratorState, RunResult, SessionRecord
 from .session_store import FileSessionStore
 
 
-class CodeAgentOrchestrator:
+class Doc2RunOrchestrator:
     def __init__(
         self,
         models: TextModel | AgentModels,
@@ -78,7 +78,7 @@ def build_orchestrator_graph(
 ):
     models = as_agent_models(models)
     requirements_agent = RequirementsAgent(models.requirements)
-    code_graph = build_code_agent_graph(models.code, knowledge_tool)
+    generation_graph = build_generation_agent_graph(models.code, knowledge_tool)
     fix_graph = build_fix_agent_graph(models.fix, knowledge_tool)
     artifacts = ArtifactManager(store)
 
@@ -125,7 +125,7 @@ def build_orchestrator_graph(
         record = _sync_record(SessionRecord.model_validate(state["session"]), state)
         retrieval_path = artifacts.save_retrieval(
             record.session_id,
-            stage="code_agent",
+            stage="generation_agent",
             round_index=1,
             queries=state["retrieval_queries"],
             context=state["retrieved_context"],
@@ -242,7 +242,7 @@ def build_orchestrator_graph(
     builder.add_node("requirements_agent", collect_requirements)
     builder.add_node("persist_message", persist_message)
     builder.add_node("confirm_task", confirm_task)
-    builder.add_node("code_agent", code_graph)
+    builder.add_node("generation_agent", generation_graph)
     builder.add_node("persist_code_generation", persist_code_generation)
     builder.add_node("execute", execute)
     builder.add_node("fix_agent", fix_graph)
@@ -256,8 +256,8 @@ def build_orchestrator_graph(
     )
     builder.add_edge("requirements_agent", "persist_message")
     builder.add_edge("persist_message", END)
-    builder.add_edge("confirm_task", "code_agent")
-    builder.add_edge("code_agent", "persist_code_generation")
+    builder.add_edge("confirm_task", "generation_agent")
+    builder.add_edge("generation_agent", "persist_code_generation")
     builder.add_conditional_edges(
         "persist_code_generation",
         route_after_validation,

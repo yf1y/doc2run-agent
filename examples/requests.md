@@ -7,7 +7,7 @@ from private SDK documentation.
 you> Generate a Python automation that lists open records through the documented demo SDK and prints them as JSON.
 agent> ...follow-up questions about inputs, outputs, side effects, and acceptance...
 
-you> It takes no input. Print one JSON array to stdout. Read-only, use only the standard library and code_agent_demo_sdk. It passes when the output parses as JSON and every item has id, title, and status.
+you> It takes no input. Print one JSON array to stdout. Read-only, use only the standard library and doc2run_demo_sdk. It passes when the output parses as JSON and every item has id, title, and status.
 agent> ...completed TaskSpec...
 
 you> /confirm

@@ -1,11 +1,11 @@
 import json
 
-from code_agent.knowledge_tools import KnowledgeSearchTool
-from code_agent.llm import AgentModels
-from code_agent.orchestrator import CodeAgentOrchestrator
-from code_agent.retriever import LocalKnowledgeBase
-from code_agent.runner import LocalPythonRunner
-from code_agent.session_store import FileSessionStore
+from doc2run_agent.knowledge_tools import KnowledgeSearchTool
+from doc2run_agent.llm import AgentModels
+from doc2run_agent.orchestrator import Doc2RunOrchestrator
+from doc2run_agent.retriever import LocalKnowledgeBase
+from doc2run_agent.runner import LocalPythonRunner
+from doc2run_agent.session_store import FileSessionStore
 
 from conftest import FakeModel
 
@@ -38,7 +38,7 @@ def make_orchestrator(tmp_path, responses, max_fix_attempts=2):
     )
     tool = KnowledgeSearchTool(LocalKnowledgeBase.from_directory(knowledge_directory))
     store = FileSessionStore(tmp_path / "sessions")
-    orchestrator = CodeAgentOrchestrator(
+    orchestrator = Doc2RunOrchestrator(
         FakeModel(responses),
         tool,
         store,
@@ -66,7 +66,7 @@ def test_orchestrator_waits_for_confirmation_then_runs_code(tmp_path):
     assert result["run_result"]["stdout"].strip() == '{"ok": true}'
     assert (store.session_directory("demo") / "task_specs" / "task_spec_v1.json").exists()
     assert (store.session_directory("demo") / "runs" / "initial" / "run.json").exists()
-    assert {"requirements_agent", "code_agent", "fix_agent", "execute"}.issubset(
+    assert {"requirements_agent", "generation_agent", "fix_agent", "execute"}.issubset(
         orchestrator.graph.get_graph().nodes
     )
 
@@ -106,7 +106,7 @@ def test_orchestrator_routes_each_stage_to_its_configured_model(tmp_path):
         [json.dumps({"queries": ["RuntimeError repair"]}), "print('{}')"]
     )
     store = FileSessionStore(tmp_path / "sessions")
-    orchestrator = CodeAgentOrchestrator(
+    orchestrator = Doc2RunOrchestrator(
         AgentModels(requirements_model, code_model, fix_model),
         KnowledgeSearchTool(LocalKnowledgeBase.from_directory(knowledge_directory)),
         store,

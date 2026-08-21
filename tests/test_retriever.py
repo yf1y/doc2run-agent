@@ -1,4 +1,4 @@
-from code_agent.retriever import LocalKnowledgeBase
+from doc2run_agent.retriever import LocalKnowledgeBase
 
 
 def test_retriever_ranks_relevant_document_first(tmp_path):
@@ -22,4 +22,3 @@ def test_retriever_reads_jsonl_entries(tmp_path):
     knowledge = LocalKnowledgeBase.from_directory(tmp_path)
 
     assert "write_text" in knowledge.search("write text", top_k=1)[0].content
-

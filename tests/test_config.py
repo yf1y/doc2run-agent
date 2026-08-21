@@ -3,7 +3,7 @@ import os
 import pytest
 from pydantic import ValidationError
 
-from code_agent.config import load_agent_model_settings
+from doc2run_agent.config import load_agent_model_settings
 
 
 def test_yaml_and_sibling_dotenv_override_environment_fallbacks(tmp_path, monkeypatch):
@@ -33,8 +33,8 @@ def test_yaml_and_sibling_dotenv_override_environment_fallbacks(tmp_path, monkey
     (tmp_path / ".env").write_text(
         "TEST_REQUIREMENTS_SECRET=dotenv-secret\n", encoding="utf-8"
     )
-    monkeypatch.setenv("CODE_AGENT_MODEL", "openai/environment-fallback")
-    monkeypatch.setenv("CODE_AGENT_API_BASE", "http://environment.local/v1")
+    monkeypatch.setenv("DOC2RUN_AGENT_MODEL", "openai/environment-fallback")
+    monkeypatch.setenv("DOC2RUN_AGENT_API_BASE", "http://environment.local/v1")
 
     try:
         settings = load_agent_model_settings(config_path)
@@ -55,7 +55,7 @@ def test_yaml_and_sibling_dotenv_override_environment_fallbacks(tmp_path, monkey
 
 
 def test_default_config_is_discovered_in_current_directory(tmp_path, monkeypatch):
-    (tmp_path / "code_agent.yaml").write_text(
+    (tmp_path / "doc2run_agent.yaml").write_text(
         """models:
   defaults:
     model: openai/default

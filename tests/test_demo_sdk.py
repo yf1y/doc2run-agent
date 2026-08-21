@@ -1,4 +1,4 @@
-from code_agent_demo_sdk import RecordClient, RecordNotFoundError
+from doc2run_demo_sdk import RecordClient, RecordNotFoundError
 
 
 def test_demo_sdk_reads_filters_and_persists_records(tmp_path):

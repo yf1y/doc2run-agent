@@ -2,16 +2,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from code_agent.llm import AgentModelSettings, LiteLLMModel, ModelSettings
+from doc2run_agent.llm import AgentModelSettings, LiteLLMModel, ModelSettings
 
 
 def test_model_settings_load_provider_neutral_environment(monkeypatch):
-    monkeypatch.setenv("CODE_AGENT_MODEL", "anthropic/claude-test")
-    monkeypatch.setenv("CODE_AGENT_API_BASE", "http://model-gateway.local")
-    monkeypatch.setenv("CODE_AGENT_API_KEY", "gateway-key")
-    monkeypatch.setenv("CODE_AGENT_MODEL_TIMEOUT", "45")
-    monkeypatch.setenv("CODE_AGENT_MODEL_MAX_RETRIES", "4")
-    monkeypatch.setenv("CODE_AGENT_TRUST_ENV", "true")
+    monkeypatch.setenv("DOC2RUN_AGENT_MODEL", "anthropic/claude-test")
+    monkeypatch.setenv("DOC2RUN_AGENT_API_BASE", "http://model-gateway.local")
+    monkeypatch.setenv("DOC2RUN_AGENT_API_KEY", "gateway-key")
+    monkeypatch.setenv("DOC2RUN_AGENT_MODEL_TIMEOUT", "45")
+    monkeypatch.setenv("DOC2RUN_AGENT_MODEL_MAX_RETRIES", "4")
+    monkeypatch.setenv("DOC2RUN_AGENT_TRUST_ENV", "true")
 
     settings = ModelSettings.from_env()
 
@@ -26,29 +26,29 @@ def test_model_settings_load_provider_neutral_environment(monkeypatch):
 
 
 def test_model_settings_require_litellm_model_name(monkeypatch):
-    monkeypatch.delenv("CODE_AGENT_MODEL", raising=False)
+    monkeypatch.delenv("DOC2RUN_AGENT_MODEL", raising=False)
 
-    with pytest.raises(ValueError, match="CODE_AGENT_MODEL"):
+    with pytest.raises(ValueError, match="DOC2RUN_AGENT_MODEL"):
         ModelSettings.from_env()
 
 
 def test_agent_model_settings_allow_independent_model_url_key_and_limits(monkeypatch):
-    monkeypatch.setenv("CODE_AGENT_MODEL", "openai/default")
-    monkeypatch.setenv("CODE_AGENT_API_BASE", "http://default.local/v1")
-    monkeypatch.setenv("CODE_AGENT_API_KEY", "default-key")
-    monkeypatch.setenv("CODE_AGENT_MODEL_TIMEOUT", "100")
-    monkeypatch.setenv("CODE_AGENT_MODEL_MAX_RETRIES", "2")
-    monkeypatch.setenv("CODE_AGENT_REQUIREMENTS_MODEL", "anthropic/requirements")
-    monkeypatch.setenv("CODE_AGENT_REQUIREMENTS_API_BASE", "http://requirements.local")
-    monkeypatch.setenv("CODE_AGENT_REQUIREMENTS_API_KEY", "requirements-key")
-    monkeypatch.setenv("CODE_AGENT_CODE_MODEL", "openai/code")
-    monkeypatch.setenv("CODE_AGENT_CODE_API_BASE", "http://code.local/v1")
-    monkeypatch.setenv("CODE_AGENT_CODE_API_KEY", "code-key")
-    monkeypatch.setenv("CODE_AGENT_CODE_TIMEOUT", "200")
-    monkeypatch.setenv("CODE_AGENT_FIX_MODEL", "ollama/fix")
-    monkeypatch.setenv("CODE_AGENT_FIX_API_BASE", "http://fix.local")
-    monkeypatch.setenv("CODE_AGENT_FIX_API_KEY", "")
-    monkeypatch.setenv("CODE_AGENT_FIX_MAX_RETRIES", "0")
+    monkeypatch.setenv("DOC2RUN_AGENT_MODEL", "openai/default")
+    monkeypatch.setenv("DOC2RUN_AGENT_API_BASE", "http://default.local/v1")
+    monkeypatch.setenv("DOC2RUN_AGENT_API_KEY", "default-key")
+    monkeypatch.setenv("DOC2RUN_AGENT_MODEL_TIMEOUT", "100")
+    monkeypatch.setenv("DOC2RUN_AGENT_MODEL_MAX_RETRIES", "2")
+    monkeypatch.setenv("DOC2RUN_AGENT_REQUIREMENTS_MODEL", "anthropic/requirements")
+    monkeypatch.setenv("DOC2RUN_AGENT_REQUIREMENTS_API_BASE", "http://requirements.local")
+    monkeypatch.setenv("DOC2RUN_AGENT_REQUIREMENTS_API_KEY", "requirements-key")
+    monkeypatch.setenv("DOC2RUN_AGENT_CODE_MODEL", "openai/code")
+    monkeypatch.setenv("DOC2RUN_AGENT_CODE_API_BASE", "http://code.local/v1")
+    monkeypatch.setenv("DOC2RUN_AGENT_CODE_API_KEY", "code-key")
+    monkeypatch.setenv("DOC2RUN_AGENT_CODE_TIMEOUT", "200")
+    monkeypatch.setenv("DOC2RUN_AGENT_FIX_MODEL", "ollama/fix")
+    monkeypatch.setenv("DOC2RUN_AGENT_FIX_API_BASE", "http://fix.local")
+    monkeypatch.setenv("DOC2RUN_AGENT_FIX_API_KEY", "")
+    monkeypatch.setenv("DOC2RUN_AGENT_FIX_MAX_RETRIES", "0")
 
     settings = AgentModelSettings.from_env()
 
@@ -76,10 +76,10 @@ def test_agent_model_settings_allow_independent_model_url_key_and_limits(monkeyp
 
 
 def test_agent_models_do_not_require_global_model_when_all_roles_are_set(monkeypatch):
-    monkeypatch.delenv("CODE_AGENT_MODEL", raising=False)
-    monkeypatch.setenv("CODE_AGENT_REQUIREMENTS_MODEL", "openai/requirements")
-    monkeypatch.setenv("CODE_AGENT_CODE_MODEL", "openai/code")
-    monkeypatch.setenv("CODE_AGENT_FIX_MODEL", "openai/fix")
+    monkeypatch.delenv("DOC2RUN_AGENT_MODEL", raising=False)
+    monkeypatch.setenv("DOC2RUN_AGENT_REQUIREMENTS_MODEL", "openai/requirements")
+    monkeypatch.setenv("DOC2RUN_AGENT_CODE_MODEL", "openai/code")
+    monkeypatch.setenv("DOC2RUN_AGENT_FIX_MODEL", "openai/fix")
 
     settings = AgentModelSettings.from_env()
 
@@ -91,15 +91,15 @@ def test_agent_models_do_not_require_global_model_when_all_roles_are_set(monkeyp
 @pytest.mark.parametrize(
     ("name", "value", "message"),
     [
-        ("CODE_AGENT_MODEL_TIMEOUT", "0", "must be positive"),
-        ("CODE_AGENT_MODEL_TIMEOUT", "slow", "must be a number"),
-        ("CODE_AGENT_MODEL_MAX_RETRIES", "-1", "cannot be negative"),
-        ("CODE_AGENT_MODEL_MAX_RETRIES", "many", "must be an integer"),
-        ("CODE_AGENT_TRUST_ENV", "sometimes", "must be true or false"),
+        ("DOC2RUN_AGENT_MODEL_TIMEOUT", "0", "must be positive"),
+        ("DOC2RUN_AGENT_MODEL_TIMEOUT", "slow", "must be a number"),
+        ("DOC2RUN_AGENT_MODEL_MAX_RETRIES", "-1", "cannot be negative"),
+        ("DOC2RUN_AGENT_MODEL_MAX_RETRIES", "many", "must be an integer"),
+        ("DOC2RUN_AGENT_TRUST_ENV", "sometimes", "must be true or false"),
     ],
 )
 def test_model_settings_validate_numeric_values(monkeypatch, name, value, message):
-    monkeypatch.setenv("CODE_AGENT_MODEL", "openai/test-model")
+    monkeypatch.setenv("DOC2RUN_AGENT_MODEL", "openai/test-model")
     monkeypatch.setenv(name, value)
 
     with pytest.raises(ValueError, match=message):

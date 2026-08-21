@@ -1,5 +1,5 @@
-from code_agent.errors import classify_failure
-from code_agent.schemas import CodeValidation, RunResult
+from doc2run_agent.errors import classify_failure
+from doc2run_agent.schemas import CodeValidation, RunResult
 
 
 def test_error_classifier_detects_missing_dependency():

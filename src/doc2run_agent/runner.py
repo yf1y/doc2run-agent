@@ -32,7 +32,7 @@ class LocalPythonRunner:
         clean_code = sanitize_code(code)
         started = time.monotonic()
         if working_directory is None:
-            with tempfile.TemporaryDirectory(prefix="code-agent-") as temporary:
+            with tempfile.TemporaryDirectory(prefix="doc2run-agent-") as temporary:
                 return self._run_in_directory(clean_code, Path(temporary), started)
         directory = Path(working_directory)
         directory.mkdir(parents=True, exist_ok=True)

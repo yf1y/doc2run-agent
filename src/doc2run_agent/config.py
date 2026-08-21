@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .llm import AgentModelSettings, ModelSettings
 
 
-DEFAULT_CONFIG_NAME = "code_agent.yaml"
+DEFAULT_CONFIG_NAME = "doc2run_agent.yaml"
 ROLE_NAMES = ("requirements", "code", "fix")
 
 
@@ -81,12 +81,12 @@ def _resolve_config_path(config_path: str | Path | None) -> Path | None:
 
 def _resolve_role(role: str, models: ModelsConfig) -> ModelSettings:
     role_config = getattr(models, role)
-    env_prefix = f"CODE_AGENT_{role.upper()}"
+    env_prefix = f"DOC2RUN_AGENT_{role.upper()}"
     model = _first_text(
         role_config.model,
         models.defaults.model,
         os.getenv(f"{env_prefix}_MODEL"),
-        os.getenv("CODE_AGENT_MODEL"),
+        os.getenv("DOC2RUN_AGENT_MODEL"),
     )
     if not model:
         raise ValueError(
@@ -97,14 +97,14 @@ def _resolve_role(role: str, models: ModelsConfig) -> ModelSettings:
         role_config.api_base,
         models.defaults.api_base,
         os.getenv(f"{env_prefix}_API_BASE"),
-        os.getenv("CODE_AGENT_API_BASE"),
+        os.getenv("DOC2RUN_AGENT_API_BASE"),
     )
     api_key = _resolve_api_key(role_config, models.defaults, env_prefix)
     timeout = _first_number(
         role_config.timeout,
         models.defaults.timeout,
         os.getenv(f"{env_prefix}_TIMEOUT"),
-        os.getenv("CODE_AGENT_MODEL_TIMEOUT"),
+        os.getenv("DOC2RUN_AGENT_MODEL_TIMEOUT"),
         default=120.0,
         field_name=f"models.{role}.timeout",
     )
@@ -112,7 +112,7 @@ def _resolve_role(role: str, models: ModelsConfig) -> ModelSettings:
         role_config.max_retries,
         models.defaults.max_retries,
         os.getenv(f"{env_prefix}_MAX_RETRIES"),
-        os.getenv("CODE_AGENT_MODEL_MAX_RETRIES"),
+        os.getenv("DOC2RUN_AGENT_MODEL_MAX_RETRIES"),
         default=2,
         field_name=f"models.{role}.max_retries",
     )
@@ -122,7 +122,7 @@ def _resolve_role(role: str, models: ModelsConfig) -> ModelSettings:
         api_key=api_key,
         timeout_seconds=timeout,
         max_retries=max_retries,
-        trust_env=_environment_flag("CODE_AGENT_TRUST_ENV", default=False),
+        trust_env=_environment_flag("DOC2RUN_AGENT_TRUST_ENV", default=False),
     )
 
 
@@ -137,7 +137,7 @@ def _resolve_api_key(role: ModelConfig, defaults: ModelConfig, env_prefix: str) 
         return source.api_key.strip() or None
     return _first_optional_text(
         os.getenv(f"{env_prefix}_API_KEY"),
-        os.getenv("CODE_AGENT_API_KEY"),
+        os.getenv("DOC2RUN_AGENT_API_KEY"),
     )
 
 

@@ -1,4 +1,4 @@
-"""A deterministic local SDK used by the runnable Code Agent example."""
+"""A deterministic local SDK used by the runnable Doc2Run Agent example."""
 
 from .client import RecordClient, RecordNotFoundError
 

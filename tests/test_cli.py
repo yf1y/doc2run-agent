@@ -1,7 +1,7 @@
 import json
 
-from code_agent.cli import run_chat
-from code_agent.session_store import FileSessionStore
+from doc2run_agent.cli import run_chat
+from doc2run_agent.session_store import FileSessionStore
 
 from conftest import FakeModel
 

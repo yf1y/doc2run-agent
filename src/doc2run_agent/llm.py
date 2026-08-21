@@ -186,7 +186,7 @@ def as_agent_models(value: TextModel | AgentModels) -> AgentModels:
 
 
 def _role_settings(role: str, shared: ModelSettings) -> ModelSettings:
-    prefix = f"CODE_AGENT_{role}"
+    prefix = f"DOC2RUN_AGENT_{role}"
     model = _env_text(f"{prefix}_MODEL", fallback=shared.model)
     if not model:
         raise ValueError(f"{prefix}_MODEL cannot be empty")
@@ -208,19 +208,19 @@ def _role_settings(role: str, shared: ModelSettings) -> ModelSettings:
 
 
 def _global_settings(*, require_model: bool) -> ModelSettings:
-    model = os.getenv("CODE_AGENT_MODEL", "").strip()
+    model = os.getenv("DOC2RUN_AGENT_MODEL", "").strip()
     if require_model and not model:
         raise ValueError(
-            "CODE_AGENT_MODEL is required; use a LiteLLM model name such as "
+            "DOC2RUN_AGENT_MODEL is required; use a LiteLLM model name such as "
             "'openai/gpt-5', 'anthropic/claude-sonnet-4-5', or 'ollama/qwen2.5-coder'"
         )
     return ModelSettings(
         model=model,
-        api_base=os.getenv("CODE_AGENT_API_BASE") or None,
-        api_key=os.getenv("CODE_AGENT_API_KEY") or None,
-        timeout_seconds=_positive_float_env("CODE_AGENT_MODEL_TIMEOUT", default=120.0),
-        max_retries=_nonnegative_int_env("CODE_AGENT_MODEL_MAX_RETRIES", default=2),
-        trust_env=_env_flag("CODE_AGENT_TRUST_ENV", default=False),
+        api_base=os.getenv("DOC2RUN_AGENT_API_BASE") or None,
+        api_key=os.getenv("DOC2RUN_AGENT_API_KEY") or None,
+        timeout_seconds=_positive_float_env("DOC2RUN_AGENT_MODEL_TIMEOUT", default=120.0),
+        max_retries=_nonnegative_int_env("DOC2RUN_AGENT_MODEL_MAX_RETRIES", default=2),
+        trust_env=_env_flag("DOC2RUN_AGENT_TRUST_ENV", default=False),
     )
 
 

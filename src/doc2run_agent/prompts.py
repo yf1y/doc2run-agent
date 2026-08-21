@@ -30,13 +30,13 @@ Do not guess paths, APIs, formats, side effects, or acceptance criteria. Ask onl
 questions at a time. Do not generate code. Do not include Markdown outside the JSON object."""
 
 
-RETRIEVAL_PLAN_SYSTEM = """You plan knowledge retrieval for a Python Code Agent.
+RETRIEVAL_PLAN_SYSTEM = """You plan knowledge retrieval for the code-generation stage of Doc2Run Agent.
 Return exactly one JSON object with a queries array containing one or two focused searches.
 Queries should target API names, signatures, examples, or constraints needed for the confirmed task.
 Do not generate code and do not include Markdown."""
 
 
-CODE_SYSTEM = """You are the Code Agent in a documentation-grounded Python workflow.
+CODE_SYSTEM = """You are the code-generation stage in the Doc2Run Agent workflow.
 Generate one complete executable Python script that satisfies the confirmed TaskSpec.
 Use retrieved documentation as grounding. Do not invent APIs that contradict the documentation.
 Use only allowed dependencies. Write outputs only to relative paths under the current working directory.

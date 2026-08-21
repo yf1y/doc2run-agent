@@ -1,5 +1,5 @@
-from code_agent.schemas import TaskSpec
-from code_agent.validation import validate_code
+from doc2run_agent.schemas import TaskSpec
+from doc2run_agent.validation import validate_code
 
 
 def spec(**updates):

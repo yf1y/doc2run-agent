@@ -2,8 +2,8 @@ import json
 
 import pytest
 
-from code_agent.requirements_agent import RequirementsAgent
-from code_agent.schemas import SessionRecord
+from doc2run_agent.requirements_agent import RequirementsAgent
+from doc2run_agent.schemas import SessionRecord
 
 from conftest import FakeModel
 

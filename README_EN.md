@@ -1,14 +1,14 @@
 [中文](README.md) · [English](README_EN.md)
 
-# Code Agent
+# Doc2Run Agent
 
-[![Tests](https://github.com/yf1y/code_agent/actions/workflows/tests.yml/badge.svg)](https://github.com/yf1y/code_agent/actions/workflows/tests.yml)
+[![Tests](https://github.com/yf1y/doc2run-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/yf1y/doc2run-agent/actions/workflows/tests.yml)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > **Turn “read the docs, write the code, make it run” into one complete loop.**
 
-Put your private SDK or API documentation in `knowledge/`, then describe the automation you need in plain language. Code Agent clarifies the requirements, retrieves the right documentation, generates Python, validates and runs it, and diagnoses and repairs failures.
+Put your private SDK or API documentation in `knowledge/`, then describe the automation you need in plain language. Doc2Run Agent clarifies the requirements, retrieves the right documentation, generates Python, validates and runs it, and diagnoses and repairs failures.
 
 The result is not merely code that looks plausible. It is an **executed, traceable, resumable automation** with evidence for every step.
 
@@ -17,7 +17,7 @@ Your request → clarify → confirm → retrieve private docs → generate
              → validate → execute → repair failures → persist artifacts
 ```
 
-| Typical one-shot generation | Code Agent |
+| Typical one-shot generation | Doc2Run Agent |
 |---|---|
 | Guesses from a short prompt | Confirms goals, I/O, constraints, and acceptance criteria first |
 | May invent private SDK usage | Retrieves local documentation before generation and repair |
@@ -47,12 +47,12 @@ agent> Documentation retrieval, generation, validation, and execution completed.
 
 ## 1. Overview
 
-Code Agent separates an automation task into three focused stages:
+Doc2Run Agent separates an automation task into three focused stages:
 
 | Stage | Responsibility | Why it matters |
 |---|---|---|
 | **Requirements Agent** | Clarifies the request and builds a typed `TaskSpec` | Prevents coding against vague requirements |
-| **Code Agent** | Plans retrieval, reads documentation, and generates a complete script | Grounds private API usage in actual docs |
+| **Generation Agent** | Plans retrieval, reads documentation, and generates a complete script | Grounds private API usage in actual docs |
 | **Fix Agent** | Diagnoses validation/runtime failures, retrieves targeted context, and rewrites | Keeps the workflow moving after the first failure |
 
 Execution is controlled by deterministic Python code, not by another LLM agent. Generation begins only after all required sections are explicit and the user enters `/confirm`.
@@ -66,15 +66,15 @@ Key capabilities:
 - **Resumable sessions** that preserve conversation and workflow state across restarts.
 - **Complete artifacts** including specs, retrieved context, generated code, validation, stdout, stderr, and repair history.
 
-A local `code_agent_demo_sdk` is bundled so the full workflow can be tried without credentials or an external service.
+A local `doc2run_demo_sdk` is bundled so the full workflow can be tried without credentials or an external service.
 
 ## 2. Installation
 
 Python 3.10 or newer is required.
 
 ```bash
-git clone https://github.com/yf1y/code_agent.git
-cd code_agent
+git clone https://github.com/yf1y/doc2run-agent.git
+cd doc2run-agent
 python -m venv .venv
 ```
 
@@ -94,11 +94,11 @@ Install and prepare local configuration:
 pip install -e .
 
 # macOS / Linux
-cp config.example.yaml code_agent.yaml
+cp config.example.yaml doc2run_agent.yaml
 cp .env.example .env
 
 # Windows PowerShell
-Copy-Item config.example.yaml code_agent.yaml
+Copy-Item config.example.yaml doc2run_agent.yaml
 Copy-Item .env.example .env
 ```
 
@@ -113,9 +113,9 @@ pytest -q
 
 ### 3.1 Configure a model
 
-Code Agent uses LiteLLM and works with OpenAI, Anthropic, Gemini, Azure, Ollama, OpenRouter, and other providers.
+Doc2Run Agent uses LiteLLM and works with OpenAI, Anthropic, Gemini, Azure, Ollama, OpenRouter, and other providers.
 
-The simplest configuration shares one model across all three stages. In `code_agent.yaml`:
+The simplest configuration shares one model across all three stages. In `doc2run_agent.yaml`:
 
 ```yaml
 models:
@@ -154,7 +154,7 @@ models:
     api_base: http://localhost:11434
 ```
 
-`code_agent.yaml` and `.env` are gitignored. Never commit real credentials.
+`doc2run_agent.yaml` and `.env` are gitignored. Never commit real credentials.
 
 ### 3.2 Add your documentation
 
@@ -167,12 +167,12 @@ knowledge/
 └── usage_notes.txt
 ```
 
-Before generation and repair, Code Agent plans focused queries and sends only the most relevant chunks to the model. Keep the bundled `demo_record_sdk.md` for a credential-free first run.
+Before generation and repair, Doc2Run Agent plans focused queries and sends only the most relevant chunks to the model. Keep the bundled `demo_record_sdk.md` for a credential-free first run.
 
 ### 3.3 Run the interactive CLI
 
 ```bash
-code-agent --session demo
+doc2run-agent --session demo
 ```
 
 Describe one automation and answer the focused follow-up questions. Once the resulting `TaskSpec` is ready, enter `/confirm` to begin generation and execution.
@@ -189,13 +189,13 @@ Describe one automation and answer the focused follow-up questions. Once the res
 Resume by reusing the same session ID:
 
 ```bash
-code-agent --session demo
+doc2run-agent --session demo
 ```
 
 Select another configuration or knowledge directory when needed:
 
 ```bash
-code-agent \
+doc2run-agent \
   --session internal-report \
   --config configs/development.yaml \
   --knowledge-dir knowledge
@@ -224,11 +224,11 @@ sessions/<session-id>/
 ## 4. Project structure
 
 ```text
-code_agent/
+doc2run-agent/
 ├── src/
-│   ├── code_agent/
+│   ├── doc2run_agent/
 │   │   ├── requirements_agent.py  # requirement clarification and TaskSpec
-│   │   ├── code_agent.py          # documentation retrieval and generation
+│   │   ├── generation_agent.py    # documentation retrieval and generation
 │   │   ├── fix_agent.py           # failure diagnosis and repair
 │   │   ├── orchestrator.py        # top-level workflow and state gates
 │   │   ├── retriever.py           # local knowledge retrieval
@@ -238,7 +238,7 @@ code_agent/
 │   │   ├── artifacts.py           # artifact organization
 │   │   ├── config.py / llm.py     # model configuration and LiteLLM adapter
 │   │   └── cli.py                 # interactive CLI
-│   └── code_agent_demo_sdk/       # offline demo SDK
+│   └── doc2run_demo_sdk/          # offline demo SDK
 ├── knowledge/                     # SDK/API documentation
 ├── examples/                      # example requests
 ├── tests/                         # deterministic test suite
