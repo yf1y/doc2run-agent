@@ -1,91 +1,141 @@
-[中文](README_zh.md) | English
+[中文](README.md) · [English](README_EN.md)
 
-# Documentation-Grounded Code Agent
+# Code Agent
 
-A runnable LangGraph project that turns private SDK/API documentation and a
-multi-turn conversation into an executable Python automation. LiteLLM provides
-a unified model layer across OpenAI, Anthropic, Gemini, Azure, Ollama,
-OpenRouter, and other providers. The example uses a neutral record SDK and
-contains no product- or scenario-specific names.
+[![Tests](https://github.com/yf1y/code_agent/actions/workflows/tests.yml/badge.svg)](https://github.com/yf1y/code_agent/actions/workflows/tests.yml)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-This is a lightweight first release, but the workflow is complete: requirements
-are clarified and confirmed, documentation is retrieved before generation, code
-is statically checked and executed, failures are classified and repaired, and
-the whole session is persisted to files.
+> **把“读文档、写代码、调到能跑”交给一个完整闭环。**
 
-## What it does
+把私有 SDK 或 API 文档放进 `knowledge/`，再用自然语言描述你想要的自动化。Code Agent 会主动澄清需求、查阅相关文档、生成 Python、执行验证，并在失败时定位问题、自主修复。
 
-The three agent stages are:
+它交付的不只是一段“看起来能跑”的代码，而是一个**真正执行过、过程可追溯、随时能恢复**的结果。
 
-1. **Requirements Agent** — incrementally builds a typed `TaskSpec`, asks at most
-   two essential questions per turn, and waits for explicit confirmation.
-2. **Code Agent** — plans RAG queries, retrieves local documentation, generates a
-   complete Python script, and submits it to deterministic validation.
-3. **Fix Agent** — classifies a validation/runtime failure, retrieves targeted
-   documentation, regenerates the complete script, and stops at a hard retry cap.
-
-Execution is a deterministic workflow operation, not a fourth LLM agent.
-
-```mermaid
-flowchart TD
-    U["User message"] --> R["Requirements Agent"]
-    R --> P["Persist draft and conversation"]
-    P --> Q{"All four sections explicit?"}
-    Q -- No --> U
-    Q -- Yes --> C["User /confirm"]
-    C --> S["Versioned confirmed TaskSpec"]
-    S --> G["Code Agent: plan RAG, retrieve, generate"]
-    G --> V{"AST and policy validation"}
-    V -- Pass --> X["Execute in session workspace"]
-    V -- Fail --> F["Fix Agent"]
-    X -- Success --> D["Persist success and artifacts"]
-    X -- Failure --> F
-    F --> L{"Retry limit reached?"}
-    L -- No --> V
-    L -- Yes --> E["Persist classified failure"]
+```text
+你的需求 → 关键问题澄清 → 需求确认 → 检索私有文档
+        → 生成代码 → 安全检查 → 实际执行 → 失败自动修复 → 保存全部产物
 ```
 
-## Prompt vs. hardcoded boundary
+| 常见的一次性代码生成 | Code Agent |
+|---|---|
+| 根据一句 prompt 猜需求 | 先把目标、输入输出、约束和验收标准问清楚 |
+| 可能编造不存在的 SDK 用法 | 生成和修复前都先检索本地文档 |
+| 输出代码后就结束 | 静态检查、实际运行并收集 stdout/stderr |
+| 出错后把问题交还给用户 | 分类错误、补充检索并在上限内自动修复 |
+| 对过程没有记录 | 保存需求版本、检索证据、代码和每轮运行结果 |
 
-The model makes semantic judgments; Python code owns invariants and side
-effects. This boundary prevents a prompt response from bypassing the workflow.
+例如，你只需要这样开始：
 
-| Capability | Prompt/LLM | Hardcoded Python |
-|---|---:|---:|
-| Interpret conversation and propose a `TaskSpec` patch | Yes | Validates allowed fields and Pydantic types |
-| Decide which questions are most useful | Yes | Maximum two; deterministic fallback questions |
-| Claim a requirements section is confirmed | Proposes | Verifies required content and controls phase transition |
-| Decide when code generation starts | No | Only `/confirm` from an eligible persisted phase |
-| Plan documentation queries | Yes | Executes local search, deduplicates, applies top-k/context limits |
-| Generate or repair Python | Yes | Sanitizes, parses AST, checks imports/calls/paths |
-| Execute code and classify concrete failure | No | Subprocess timeout, safe env, return-code/error classification |
-| Decide whether another repair is allowed | No | Fixed retry counter and conditional LangGraph edge |
-| Save/resume/reset sessions and artifacts | No | Atomic JSON writes, snapshots, recoverable archive reset |
+```text
+你> 读取内部 Record SDK 中所有 open 状态的记录，并输出为 JSON。
 
-Prompts live in `src/code_agent/prompts.py`. The control plane is primarily in
-`requirements_agent.py`, `orchestrator.py`, `validation.py`, `runner.py`, and
-`session_store.py`.
+Agent> 输出写到哪里？是否允许修改数据？怎样算执行成功？
 
-## Install
+你> 输出到 stdout；只读；结果必须是合法 JSON，且每项包含 id、title、status。
 
-Python 3.10 or newer is required.
+Agent> 需求已整理完成，请检查 TaskSpec。确认后输入 /confirm。
+
+你> /confirm
+
+Agent> 已完成文档检索、代码生成、验证和执行。产物已保存。
+```
+
+[功能概述](#1-功能概述) · [安装方式](#2-安装方式) · [使用说明](#3-使用说明) · [项目结构](#4-项目结构)
+
+---
+
+## 1. 功能概述
+
+Code Agent 将一次 Python 自动化拆成三个各司其职的阶段：
+
+| 阶段 | 它负责什么 | 解决什么问题 |
+|---|---|---|
+| **Requirements Agent** | 多轮澄清并生成结构化 `TaskSpec` | 避免需求含糊时直接开写 |
+| **Code Agent** | 规划检索、阅读文档并生成完整脚本 | 避免脱离私有 API 文档“凭空写代码” |
+| **Fix Agent** | 分析验证或运行错误，检索相关资料后重写 | 避免第一次失败后流程中断 |
+
+代码执行由确定性的 Python 工作流控制，而不是交给模型自行决定。只有需求完整且用户输入 `/confirm` 后，系统才会进入生成和执行阶段。
+
+主要能力：
+
+- **需求确认门**：目标、输入输出、约束、验收标准缺一不可。
+- **本地文档 RAG**：支持 `.md`、`.txt`、`.json`、`.jsonl`，返回带来源的检索证据。
+- **多模型协作**：三个阶段可以共用一个模型，也可以分别使用不同模型或服务商。
+- **生成—验证—执行—修复闭环**：检查语法、依赖、危险调用和明显的绝对路径写入，再实际执行代码。
+- **断点恢复**：对话、需求版本和运行阶段会持久化；退出后可以使用同一 session 继续。
+- **完整留痕**：保留 `TaskSpec`、检索上下文、生成代码、验证结果、stdout、stderr 和修复记录。
+
+项目内置一个完全本地的 `code_agent_demo_sdk`，无需真实账号或网络服务即可体验完整流程。
+
+## 2. 安装方式
+
+需要 Python 3.10 或更高版本。
 
 ```bash
+git clone https://github.com/yf1y/code_agent.git
+cd code_agent
+
 python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-cp config.example.yaml code_agent.yaml
-cp .env.example .env
 ```
 
-## Model configuration
+激活虚拟环境：
 
-YAML is the recommended configuration entry. `model` uses LiteLLM's
-`provider/model` convention. Each Agent can use a different model, URL, key,
-timeout, and retry count:
+```bash
+# macOS / Linux
+source .venv/bin/activate
+
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+```
+
+安装项目并准备配置：
+
+```bash
+pip install -e .
+
+# macOS / Linux
+cp config.example.yaml code_agent.yaml
+cp .env.example .env
+
+# Windows PowerShell
+Copy-Item config.example.yaml code_agent.yaml
+Copy-Item .env.example .env
+```
+
+如果需要运行测试，安装开发依赖：
+
+```bash
+pip install -e ".[dev]"
+pytest -q
+```
+
+## 3. 使用说明
+
+### 3.1 配置模型
+
+Code Agent 通过 LiteLLM 接入模型，可使用 OpenAI、Anthropic、Gemini、Azure、Ollama、OpenRouter 等提供商。
+
+最简单的方式是让三个 Agent 共用同一个模型。在 `code_agent.yaml` 中填写：
 
 ```yaml
-# code_agent.yaml
+models:
+  defaults:
+    model: openai/gpt-5
+    api_key_env: OPENAI_API_KEY
+    timeout: 120
+    max_retries: 2
+```
+
+然后在 `.env` 中保存密钥：
+
+```dotenv
+OPENAI_API_KEY=your-key-here
+```
+
+也可以为不同阶段选择不同模型。例如，用擅长对话的模型澄清需求、用代码模型生成脚本、用本地模型处理修复：
+
+```yaml
 models:
   defaults:
     timeout: 120
@@ -93,215 +143,110 @@ models:
 
   requirements:
     model: anthropic/claude-sonnet-4-5
-    api_base: https://requirements.example/v1
-    api_key_env: REQUIREMENTS_API_KEY
+    api_key_env: ANTHROPIC_API_KEY
 
   code:
     model: openai/gpt-5
-    api_base: https://code.example/v1
-    api_key_env: CODE_MODEL_API_KEY
+    api_key_env: OPENAI_API_KEY
     timeout: 180
 
   fix:
     model: ollama/qwen2.5-coder
     api_base: http://localhost:11434
-    max_retries: 1
 ```
 
-Keep secrets in the sibling `.env`, which the CLI loads automatically without
-shell `export` commands:
+`code_agent.yaml` 和 `.env` 默认不会被 Git 提交。不要把真实密钥写入示例文件或仓库。
 
-```dotenv
-REQUIREMENTS_API_KEY=...
-CODE_MODEL_API_KEY=...
-```
+### 3.2 放入你的文档
 
-`code-agent` automatically discovers `./code_agent.yaml`. Select another file
-explicitly with:
-
-```bash
-code-agent --config configs/development.yaml --session demo
-```
-
-The `.env` file is resolved beside the selected YAML file. `code_agent.yaml`
-and `.env` are gitignored; commit `config.example.yaml` and `.env.example`, not
-real credentials. A literal YAML `api_key` is supported for controlled local
-use, but `api_key_env` is recommended for public repositories.
-
-Configuration precedence, from highest to lowest, is:
-
-1. role-specific YAML (`models.requirements`, `models.code`, `models.fix`);
-2. YAML `models.defaults`;
-3. role-specific environment variables;
-4. global `CODE_AGENT_*` environment variables;
-5. built-in timeout and retry defaults.
-
-Environment-only configuration remains supported for deployments. The role
-prefixes are `CODE_AGENT_REQUIREMENTS_*`, `CODE_AGENT_CODE_*`, and
-`CODE_AGENT_FIX_*`, with fields `MODEL`, `API_BASE`, `API_KEY`, `TIMEOUT`, and
-`MAX_RETRIES`. Provider-native credentials such as `OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `OPENROUTER_API_KEY` are also read by
-LiteLLM after `.env` is loaded.
-
-Model traffic ignores process-wide proxy variables by default. Set
-`CODE_AGENT_TRUST_ENV=true` only when the provider must use `HTTP_PROXY`,
-`HTTPS_PROXY`, or `ALL_PROXY`.
-
-### Model configuration is not CLI-only
-
-The CLI calls the public configuration loader and `create_agent_models()`
-factory, but Python callers can use the same YAML and `.env` files:
-
-```python
-from code_agent import create_agent_models, load_agent_model_settings
-
-settings = load_agent_model_settings("code_agent.yaml")
-with create_agent_models(settings) as models:
-    requirements_text = models.requirements.complete(
-        "You return plain text.", "Say hello."
-    )
-```
-
-Or configure all three adapters directly without environment variables:
-
-```python
-from code_agent import AgentModelSettings, ModelSettings, create_agent_models
-
-settings = AgentModelSettings(
-    requirements=ModelSettings(
-        model="anthropic/claude-sonnet-4-5",
-        api_key="requirements-key",
-    ),
-    code=ModelSettings(
-        model="openai/gpt-5",
-        api_base="https://code.example/v1",
-        api_key="code-key",
-    ),
-    fix=ModelSettings(
-        model="ollama/qwen2.5-coder",
-        api_base="http://localhost:11434",
-    ),
-)
-models = create_agent_models(settings)
-```
-
-For tests or embedding in another application, any object implementing
-`complete(system_prompt, user_prompt) -> str` satisfies `TextModel` and can be
-passed directly to `CodeAgentOrchestrator`. Passing one `TextModel` preserves
-the shorthand behavior of sharing it across all three stages; passing
-`AgentModels(requirements=..., code=..., fix=...)` selects them independently.
-
-## Run the interactive CLI
-
-From the repository root:
-
-```bash
-code-agent --session demo
-```
-
-Describe one Python automation. The agent will ask focused questions until the
-goal, inputs/outputs, constraints, and acceptance criteria are explicit. Review
-the printed `TaskSpec`, then enter `/confirm`.
-
-Useful commands:
+将 SDK/API 说明放入 `knowledge/`：
 
 ```text
-/show      current TaskSpec draft
-/history   persisted requirements conversation
-/confirm   snapshot the spec, generate, validate, run, and repair if needed
-/reset     archive the session and start over
-/exit      exit without losing the session
+knowledge/
+├── internal_sdk.md
+├── api_reference.json
+└── usage_notes.txt
 ```
 
-Resume with the same ID:
+Code Agent 会在生成和修复前自动规划查询，只把最相关的文档片段交给模型。你可以先保留仓库自带的 `demo_record_sdk.md`，用它完成第一次体验。
+
+### 3.3 运行交互式 CLI
 
 ```bash
 code-agent --session demo
 ```
 
-If the process was interrupted during generation or execution, `/confirm`
-retries from the existing confirmed `TaskSpec` without creating a new spec
-version. Completed sessions are immutable; use `/reset` or a new session ID.
+输入一个自动化需求，回答 Agent 的关键问题。系统展示整理后的 `TaskSpec` 后，输入 `/confirm` 才会开始生成和运行代码。
 
-See `examples/requests.md` for a conversation using the bundled neutral SDK.
+常用命令：
 
-## Local RAG
+```text
+/show      查看当前 TaskSpec 草稿
+/history   查看已保存的需求对话
+/confirm   确认需求，开始生成、验证、执行和修复
+/reset     归档当前 session，重新开始
+/help      查看命令帮助
+/exit      保存并退出
+```
 
-Place `.md`, `.txt`, `.json`, or `.jsonl` documents under `knowledge/`. The
-dependency-light retriever chunks them, builds character n-gram TF-IDF vectors,
-adds lexical reranking, and returns source-tagged evidence. Both Code Agent and
-Fix Agent first ask the model for one or two focused queries; Python performs the
-actual searches and enforces context limits.
+继续上一次会话时，使用相同的 session ID：
 
-The included `code_agent_demo_sdk` acts like a small private SDK, but is local and
-deterministic. Its documentation is in `knowledge/demo_record_sdk.md`, allowing a
-fresh installation to demonstrate documentation-grounded API use without a
-network service or proprietary data.
+```bash
+code-agent --session demo
+```
 
-## Persisted session layout
+指定其他模型配置或知识库目录：
+
+```bash
+code-agent \
+  --session internal-report \
+  --config configs/development.yaml \
+  --knowledge-dir knowledge
+```
+
+更多输入示例见 [`examples/requests.md`](examples/requests.md)。
+
+### 3.4 查看运行结果
+
+每个 session 都有独立目录：
 
 ```text
 sessions/<session-id>/
-├── session.json                         # latest conversation and workflow state
-├── task_specs/task_spec_v1.json         # immutable confirmed requirement
-├── retrieval/
-│   ├── code_agent_round_001.json
-│   └── fix_agent_round_001.json
-├── runs/
-│   ├── initial/{generated.py,validation.json,run.json,stdout.txt,stderr.txt}
-│   └── fix_001/{generated.py,validation.json,run.json,stdout.txt,stderr.txt}
-└── workspace/generated.py               # script executed in a stable workspace
+├── session.json                 # 对话和工作流状态
+├── task_specs/                  # 已确认、不可变的需求版本
+├── retrieval/                   # 每轮文档检索证据
+├── runs/                        # 生成/修复代码与运行结果
+└── workspace/generated.py       # 最终执行脚本
 ```
 
-`/reset` moves the old directory under `sessions/archives/`; it does not delete
-the evidence. Session writes use a temporary file plus atomic replacement.
+`/reset` 会将旧 session 移入 `sessions/archives/`，而不是直接删除，因此调试和复盘所需的信息都会保留。
 
-## Static checks and execution boundary
+> [!WARNING]
+> 当前 Runner 提供 AST 策略检查、精简环境和超时控制，但它**不是操作系统级沙箱**。不要直接执行来自不可信用户的请求，也不要将其原样暴露为公共服务。生产环境应将 `LocalPythonRunner` 替换为受限容器或虚拟机。
 
-Before execution, the validator checks:
-
-- valid Python syntax;
-- imports against `TaskSpec.allowed_dependencies` and `allowed_apis`;
-- known destructive filesystem/process calls;
-- obvious writes to absolute paths.
-
-The runner uses the current Python interpreter, a persistent per-session working
-directory, a reduced child environment that excludes model credentials, captured
-stdout/stderr, and a timeout.
-
-This is **not an OS sandbox**. AST checks cannot prove arbitrary Python safe, and
-generated code still has the current user's filesystem and network permissions.
-Do not expose the runner as a public service or execute untrusted requests. For
-that use case, replace `LocalPythonRunner` with a locked-down container or VM.
-
-## Tests
-
-```bash
-pytest -q
-```
-
-The deterministic suite uses a fake model and covers multi-turn requirements,
-confirmation gates, spec snapshots, retrieval, static policy checks, successful
-execution, timeouts, failure classification, repair routing/limits, interruption
-recovery, the interactive CLI, artifact persistence, and the example SDK.
-
-## Project map
+## 4. 项目结构
 
 ```text
-src/code_agent/
-├── config.py              # YAML/.env loading, validation, and precedence
-├── requirements_agent.py  # conversational TaskSpec construction
-├── code_agent.py          # LangGraph generation subgraph
-├── fix_agent.py           # LangGraph repair subgraph
-├── orchestrator.py        # top-level graph and hard state transitions
-├── prompts.py             # every LLM-owned behavior
-├── llm.py                 # LiteLLM adapter, settings, and public factory
-├── retriever.py           # local index and ranking
-├── knowledge_tools.py     # bounded multi-query RAG operation
-├── validation.py          # deterministic AST/import/path policy
-├── runner.py              # timeout-controlled subprocess execution
-├── session_store.py       # atomic file persistence and versioning
-├── artifacts.py           # evidence layout
-├── schemas.py             # typed state and domain contracts
-└── cli.py                 # interactive/resumable shell
+code_agent/
+├── src/
+│   ├── code_agent/
+│   │   ├── requirements_agent.py  # 需求澄清与 TaskSpec 构建
+│   │   ├── code_agent.py          # 文档检索与代码生成
+│   │   ├── fix_agent.py           # 错误分析与自动修复
+│   │   ├── orchestrator.py        # 顶层工作流与阶段控制
+│   │   ├── retriever.py           # 本地知识库检索
+│   │   ├── validation.py          # 代码静态验证
+│   │   ├── runner.py              # 超时控制的本地执行器
+│   │   ├── session_store.py       # session 持久化与恢复
+│   │   ├── artifacts.py           # 运行产物组织
+│   │   ├── config.py / llm.py     # 模型配置与 LiteLLM 适配
+│   │   └── cli.py                 # 交互式命令行入口
+│   └── code_agent_demo_sdk/       # 无需联网的演示 SDK
+├── knowledge/                     # SDK/API 文档知识库
+├── examples/                      # 示例需求与对话
+├── tests/                         # 确定性测试套件
+├── config.example.yaml            # 模型配置示例
+└── pyproject.toml                 # 依赖、打包和 CLI 定义
 ```
+
+基于 [LangGraph](https://github.com/langchain-ai/langgraph) 与 [LiteLLM](https://github.com/BerriAI/litellm) 构建，采用 [MIT License](LICENSE)。
