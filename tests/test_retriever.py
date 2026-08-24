@@ -22,3 +22,18 @@ def test_retriever_reads_jsonl_entries(tmp_path):
     knowledge = LocalKnowledgeBase.from_directory(tmp_path)
 
     assert "write_text" in knowledge.search("write text", top_k=1)[0].content
+
+
+def test_markdown_chunk_keeps_heading_and_code_block_together(tmp_path):
+    (tmp_path / "sdk.md").write_text(
+        "# Client\n\nCreate a client.\n\n"
+        "## create_node\n\nUse this call:\n\n"
+        "```python\nnode = create_node(name='n1')\n```\n",
+        encoding="utf-8",
+    )
+
+    result = LocalKnowledgeBase.from_directory(tmp_path).search("create_node", top_k=1)[0]
+
+    assert result.heading == "create_node"
+    assert "```python" in result.content
+    assert "node = create_node" in result.content

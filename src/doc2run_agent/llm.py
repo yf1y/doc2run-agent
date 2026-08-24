@@ -23,6 +23,7 @@ class ModelSettings:
     max_retries: int = 2
     temperature: float = 0.0
     trust_env: bool = False
+    context_tokens: int = 16_000
 
     @classmethod
     def from_env(cls) -> "ModelSettings":
@@ -204,6 +205,9 @@ def _role_settings(role: str, shared: ModelSettings) -> ModelSettings:
         ),
         temperature=shared.temperature,
         trust_env=shared.trust_env,
+        context_tokens=_positive_int_env(
+            f"{prefix}_CONTEXT_TOKENS", default=shared.context_tokens
+        ),
     )
 
 
@@ -221,6 +225,7 @@ def _global_settings(*, require_model: bool) -> ModelSettings:
         timeout_seconds=_positive_float_env("DOC2RUN_AGENT_MODEL_TIMEOUT", default=120.0),
         max_retries=_nonnegative_int_env("DOC2RUN_AGENT_MODEL_MAX_RETRIES", default=2),
         trust_env=_env_flag("DOC2RUN_AGENT_TRUST_ENV", default=False),
+        context_tokens=_positive_int_env("DOC2RUN_AGENT_CONTEXT_TOKENS", default=16_000),
     )
 
 
@@ -283,6 +288,19 @@ def _nonnegative_int_env(name: str, *, default: int) -> int:
         raise ValueError(f"{name} must be an integer") from None
     if value < 0:
         raise ValueError(f"{name} cannot be negative")
+    return value
+
+
+def _positive_int_env(name: str, *, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be an integer") from None
+    if value < 1000:
+        raise ValueError(f"{name} must be at least 1000")
     return value
 
 

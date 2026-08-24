@@ -88,16 +88,24 @@ def build_orchestrator_graph(
     def collect_requirements(state: OrchestratorState) -> dict[str, Any]:
         record = SessionRecord.model_validate(state["session"])
         record = requirements_agent.process(record, state["user_input"])
-        return {
+        value = {
             "session": record.model_dump(mode="json"),
             "assistant_message": record.messages[-1].content,
             "status": record.status,
         }
+        if requirements_agent.last_context_record is not None:
+            value["context_records"] = [requirements_agent.last_context_record]
+        return value
 
     def persist_message(state: OrchestratorState) -> dict[str, Any]:
         record = SessionRecord.model_validate(state["session"])
         store.save(record)
-        return {"session": record.model_dump(mode="json")}
+        paths = [artifacts.save_decisions(record.session_id, record.decisions)]
+        paths.extend(artifacts.save_context_records(record.session_id, state.get("context_records", [])))
+        return {
+            "session": record.model_dump(mode="json"),
+            "artifact_paths": _append_paths(state, paths),
+        }
 
     def confirm_task(state: OrchestratorState) -> dict[str, Any]:
         record = SessionRecord.model_validate(state["session"])
@@ -116,8 +124,10 @@ def build_orchestrator_graph(
         return {
             "session": record.model_dump(mode="json"),
             "task_spec": snapshot.model_dump(mode="json"),
+            "decisions": list(record.decisions),
             "fix_attempts": 0,
             "run_history": [],
+            "context_records": [],
             "status": "generating_code",
         }
 
@@ -130,16 +140,44 @@ def build_orchestrator_graph(
             queries=state["retrieval_queries"],
             context=state["retrieved_context"],
         )
+        extra_paths: list[Any] = []
+        if state.get("additional_retrieval_queries"):
+            extra_paths.append(
+                artifacts.save_retrieval(
+                    record.session_id,
+                    stage="generation_agent_followup",
+                    round_index=2,
+                    queries=state["additional_retrieval_queries"],
+                    context=state.get("additional_context", []),
+                )
+            )
+        planning_paths = artifacts.save_planning(
+            record.session_id,
+            initial_context=state["retrieved_context"],
+            additional_context=state.get("additional_context", []),
+            initial_implementation_plan=state.get(
+                "initial_implementation_plan", state["implementation_plan"]
+            ),
+            implementation_plan=state["implementation_plan"],
+            initial_plan_review=state.get("initial_plan_review", state["plan_review"]),
+            plan_review=state["plan_review"],
+        )
         generation_paths = artifacts.save_generation(
             record.session_id,
             attempt=0,
             code=state["code"],
             validation=state["code_validation"],
         )
+        context_paths = artifacts.save_context_records(
+            record.session_id, state.get("context_records", [])
+        )
         store.save(record)
         return {
             "session": record.model_dump(mode="json"),
-            "artifact_paths": _append_paths(state, [retrieval_path, *generation_paths]),
+            "artifact_paths": _append_paths(
+                state,
+                [retrieval_path, *extra_paths, *planning_paths, *generation_paths, *context_paths],
+            ),
         }
 
     def persist_fix_generation(state: OrchestratorState) -> dict[str, Any]:
@@ -159,10 +197,23 @@ def build_orchestrator_graph(
             code=state["code"],
             validation=state["code_validation"],
         )
+        fix_paths = artifacts.save_fix_details(
+            record.session_id,
+            attempt=attempt,
+            fix_plan=state["fix_plan"],
+            code_patch=state["code_patch"],
+            patch_review=state["patch_review"],
+            patch_error=state.get("patch_error", ""),
+        )
+        context_paths = artifacts.save_context_records(
+            record.session_id, state.get("context_records", [])
+        )
         store.save(record)
         return {
             "session": record.model_dump(mode="json"),
-            "artifact_paths": _append_paths(state, [retrieval_path, *generation_paths]),
+            "artifact_paths": _append_paths(
+                state, [retrieval_path, *generation_paths, *fix_paths, *context_paths]
+            ),
         }
 
     def route_after_validation(state: OrchestratorState) -> Literal["execute", "fix_agent", "failed"]:
@@ -183,7 +234,9 @@ def build_orchestrator_graph(
         history.append(
             {
                 "attempt": state.get("fix_attempts", 0),
-                "code": state["code"],
+                "code_artifact": str(
+                    artifacts._run_directory(state.get("fix_attempts", 0)) / "generated.py"
+                ),
                 "validation": state["code_validation"],
                 "run_result": result_dict,
             }
@@ -284,6 +337,17 @@ def _sync_record(record: SessionRecord, state: OrchestratorState) -> SessionReco
         record.confirmed_spec = TaskSpec.model_validate(state["task_spec"])
     record.retrieval_queries = list(state.get("retrieval_queries", []))
     record.retrieved_context = list(state.get("retrieved_context", []))
+    if state.get("additional_context"):
+        known = {str(item.get("source", "")) for item in record.retrieved_context}
+        record.retrieved_context.extend(
+            item
+            for item in state["additional_context"]
+            if str(item.get("source", "")) not in known
+        )
+    if state.get("implementation_plan"):
+        record.implementation_plan = dict(state["implementation_plan"])
+    if state.get("plan_review"):
+        record.plan_review = dict(state["plan_review"])
     record.generated_code = state.get("code", record.generated_code)
     if state.get("code_validation"):
         record.code_validation = CodeValidation.model_validate(state["code_validation"])

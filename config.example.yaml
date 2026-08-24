@@ -2,6 +2,8 @@ models:
   defaults:
     timeout: 120
     max_retries: 2
+    # Maximum estimated input tokens sent in any one workflow step.
+    context_tokens: 16000
 
   requirements:
     model: anthropic/claude-sonnet-4-5

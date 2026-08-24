@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .context import complete_and_record
 from .llm import TextModel
 from .parsing import parse_model
 from .prompts import REQUIREMENTS_SYSTEM, requirements_request
@@ -30,6 +31,7 @@ PATCHABLE_FIELDS = {
 class RequirementsAgent:
     def __init__(self, model: TextModel) -> None:
         self.model = model
+        self.last_context_record: dict[str, Any] | None = None
 
     def process(self, record: SessionRecord, user_input: str) -> SessionRecord:
         message = user_input.strip()
@@ -37,20 +39,26 @@ class RequirementsAgent:
             raise ValueError("User input cannot be empty")
         record.messages.append(ChatMessage(role="user", content=message))
 
-        response = self.model.complete(
-            REQUIREMENTS_SYSTEM,
-            requirements_request(
-                record.draft_spec.model_dump(mode="json"),
-                record.confirmed_sections,
-                [item.model_dump(mode="json") for item in record.messages],
-            ),
+        user_prompt = requirements_request(
+            record.draft_spec.model_dump(mode="json"),
+            record.confirmed_sections,
+            [item.model_dump(mode="json") for item in record.messages],
+            record.decisions,
         )
+        response, context_records = complete_and_record(
+            self.model,
+            stage="requirements",
+            system_prompt=REQUIREMENTS_SYSTEM,
+            user_prompt=user_prompt,
+        )
+        self.last_context_record = context_records[-1]
         decision = parse_model(response, RequirementsDecision)
         record.draft_spec = apply_spec_patch(record.draft_spec, decision.spec_patch)
         record.confirmed_sections = _merge_confirmed_sections(
             record.confirmed_sections,
             list(decision.confirmed_sections),
         )
+        record.decisions = _merge_decisions(record.decisions, list(decision.decisions))
 
         missing = missing_sections(record.draft_spec, record.confirmed_sections)
         if missing:
@@ -124,6 +132,10 @@ def fallback_questions(missing: list[str]) -> list[str]:
 def _merge_confirmed_sections(current: list[str], additions: list[str]) -> list[str]:
     merged = set(current) | set(additions)
     return [section for section in REQUIRED_SECTIONS if section in merged]
+
+
+def _merge_decisions(current: list[str], additions: list[str]) -> list[str]:
+    return list(dict.fromkeys([*current, *additions]))
 
 
 def _compose_message(message: str, questions: list[str]) -> str:

@@ -15,6 +15,7 @@ def test_yaml_and_sibling_dotenv_override_environment_fallbacks(tmp_path, monkey
     api_base: http://yaml-default.local/v1
     timeout: 90
     max_retries: 3
+    context_tokens: 12000
   requirements:
     model: anthropic/requirements
     api_base: http://requirements.local
@@ -45,10 +46,12 @@ def test_yaml_and_sibling_dotenv_override_environment_fallbacks(tmp_path, monkey
     assert settings.requirements.api_base == "http://requirements.local"
     assert settings.requirements.api_key == "dotenv-secret"
     assert settings.requirements.timeout_seconds == 90
+    assert settings.requirements.context_tokens == 12000
     assert settings.code.model == "openai/code"
     assert settings.code.api_base == "http://yaml-default.local/v1"
     assert settings.code.api_key == "code-literal-key"
     assert settings.code.timeout_seconds == 180
+    assert settings.code.context_tokens == 12000
     assert settings.fix.model == "ollama/fix"
     assert settings.fix.api_base == "http://localhost:11434"
     assert settings.fix.max_retries == 0

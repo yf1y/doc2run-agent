@@ -3,7 +3,7 @@ import json
 from doc2run_agent.cli import run_chat
 from doc2run_agent.session_store import FileSessionStore
 
-from conftest import FakeModel
+from conftest import FakeModel, implementation_plan_response, plan_review_response
 
 
 def completed_spec_response():
@@ -38,6 +38,8 @@ def test_interactive_cli_persists_and_executes_a_session(tmp_path):
             [
                 completed_spec_response(),
                 json.dumps({"queries": ["JSON output"]}),
+                implementation_plan_response(),
+                plan_review_response(),
                 "import json\nprint(json.dumps({'ok': True}))",
             ]
         ),

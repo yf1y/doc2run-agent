@@ -1,35 +1,153 @@
 from __future__ import annotations
 
+from typing import Any
+
 from langgraph.graph import END, START, StateGraph
 
+from .context import complete_and_record, context_sources
 from .knowledge_tools import KnowledgeSearchTool
 from .llm import TextModel
 from .parsing import parse_model
-from .prompts import CODE_SYSTEM, RETRIEVAL_PLAN_SYSTEM, code_request, retrieval_plan_request
+from .prompts import (
+    CODE_SYSTEM,
+    IMPLEMENTATION_PLAN_SYSTEM,
+    PLAN_REVIEW_SYSTEM,
+    PLAN_REVISION_SYSTEM,
+    RETRIEVAL_PLAN_SYSTEM,
+    code_request,
+    implementation_plan_request,
+    plan_review_request,
+    plan_revision_request,
+    retrieval_plan_request,
+)
 from .runner import sanitize_code
-from .schemas import OrchestratorState, RetrievalQueryPlan, TaskSpec
+from .schemas import ImplementationPlan, OrchestratorState, PlanReview, RetrievalQueryPlan, TaskSpec
 from .validation import validate_code
 
 
 def build_generation_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool):
     def plan_retrieval(state: OrchestratorState) -> dict[str, object]:
-        plan = parse_model(
-            model.complete(RETRIEVAL_PLAN_SYSTEM, retrieval_plan_request(state["task_spec"])),
-            RetrievalQueryPlan,
+        prompt = retrieval_plan_request(state["task_spec"], state.get("decisions", []))
+        response, records = complete_and_record(
+            model,
+            stage="initial_retrieval_plan",
+            system_prompt=RETRIEVAL_PLAN_SYSTEM,
+            user_prompt=prompt,
+            current=state.get("context_records"),
         )
-        return {"retrieval_queries": plan.queries, "status": "retrieving_code_context"}
+        plan = parse_model(response, RetrievalQueryPlan)
+        return {
+            "retrieval_queries": plan.queries,
+            "context_records": records,
+            "status": "retrieving_code_context",
+        }
 
     def retrieve(state: OrchestratorState) -> dict[str, object]:
         context = knowledge_tool.search_many(state["retrieval_queries"])
         return {"retrieved_context": context}
 
-    def generate(state: OrchestratorState) -> dict[str, object]:
-        code = sanitize_code(
-            model.complete(CODE_SYSTEM, code_request(state["task_spec"], state["retrieved_context"]))
+    def create_plan(state: OrchestratorState) -> dict[str, object]:
+        prompt = implementation_plan_request(state["task_spec"], state["retrieved_context"])
+        response, records = complete_and_record(
+            model,
+            stage="implementation_plan",
+            system_prompt=IMPLEMENTATION_PLAN_SYSTEM,
+            user_prompt=prompt,
+            current=state.get("context_records"),
+            sources=context_sources(state["retrieved_context"], prompt),
         )
+        plan = parse_model(response, ImplementationPlan)
+        value = plan.model_dump(mode="json")
+        return {
+            "initial_implementation_plan": value,
+            "implementation_plan": value,
+            "context_records": records,
+        }
+
+    def review_plan(state: OrchestratorState) -> dict[str, object]:
+        prompt = plan_review_request(
+            state["task_spec"], state["implementation_plan"], state["retrieved_context"]
+        )
+        response, records = complete_and_record(
+            model,
+            stage="implementation_plan_review",
+            system_prompt=PLAN_REVIEW_SYSTEM,
+            user_prompt=prompt,
+            current=state.get("context_records"),
+            sources=context_sources(state["retrieved_context"], prompt),
+        )
+        review = parse_model(response, PlanReview)
+        value = review.model_dump(mode="json")
+        return {
+            "initial_plan_review": value,
+            "plan_review": value,
+            "additional_retrieval_queries": review.search_queries,
+            "context_records": records,
+        }
+
+    def retrieve_missing(state: OrchestratorState) -> dict[str, object]:
+        queries = state.get("additional_retrieval_queries", [])
+        return {"additional_context": knowledge_tool.search_many(queries) if queries else []}
+
+    def route_after_review(state: OrchestratorState) -> str:
+        review = PlanReview.model_validate(state["plan_review"])
+        return "generate_code" if review.ok and not review.search_queries else "search_missing_knowledge"
+
+    def revise_plan(state: OrchestratorState) -> dict[str, object]:
+        prompt = plan_revision_request(
+            state["task_spec"],
+            state["implementation_plan"],
+            state["plan_review"],
+            state.get("additional_context", []),
+        )
+        response, records = complete_and_record(
+            model,
+            stage="implementation_plan_revision",
+            system_prompt=PLAN_REVISION_SYSTEM,
+            user_prompt=prompt,
+            current=state.get("context_records"),
+            sources=context_sources(state.get("additional_context", []), prompt),
+        )
+        plan = parse_model(response, ImplementationPlan)
+        return {"implementation_plan": plan.model_dump(mode="json"), "context_records": records}
+
+    def review_revised_plan(state: OrchestratorState) -> dict[str, object]:
+        prompt = plan_review_request(
+            state["task_spec"],
+            state["implementation_plan"],
+            _merge_context(state["retrieved_context"], state.get("additional_context", [])),
+        )
+        response, records = complete_and_record(
+            model,
+            stage="implementation_plan_final_review",
+            system_prompt=PLAN_REVIEW_SYSTEM,
+            user_prompt=prompt,
+            current=state.get("context_records"),
+            sources=context_sources(
+                _merge_context(state["retrieved_context"], state.get("additional_context", [])),
+                prompt,
+            ),
+        )
+        review = parse_model(response, PlanReview)
+        return {"plan_review": review.model_dump(mode="json"), "context_records": records}
+
+    def generate(state: OrchestratorState) -> dict[str, object]:
+        context = _merge_context(state["retrieved_context"], state.get("additional_context", []))
+        prompt = code_request(
+            state["task_spec"], context, state["implementation_plan"], state["plan_review"]
+        )
+        response, records = complete_and_record(
+            model,
+            stage="code_generation",
+            system_prompt=CODE_SYSTEM,
+            user_prompt=prompt,
+            current=state.get("context_records"),
+            sources=context_sources(context, prompt),
+        )
+        code = sanitize_code(response)
         if not code:
             raise ValueError("Generation Agent returned empty code")
-        return {"code": code, "status": "generated", "fix_attempts": 0}
+        return {"code": code, "context_records": records, "status": "generated", "fix_attempts": 0}
 
     def validate(state: OrchestratorState) -> dict[str, object]:
         result = validate_code(state["code"], TaskSpec.model_validate(state["task_spec"]))
@@ -38,11 +156,41 @@ def build_generation_agent_graph(model: TextModel, knowledge_tool: KnowledgeSear
     builder = StateGraph(OrchestratorState)
     builder.add_node("plan_retrieval", plan_retrieval)
     builder.add_node("search_knowledge", retrieve)
+    builder.add_node("create_implementation_plan", create_plan)
+    builder.add_node("review_implementation_plan", review_plan)
+    builder.add_node("search_missing_knowledge", retrieve_missing)
+    builder.add_node("revise_implementation_plan", revise_plan)
+    builder.add_node("review_revised_plan", review_revised_plan)
     builder.add_node("generate_code", generate)
     builder.add_node("validate_code", validate)
     builder.add_edge(START, "plan_retrieval")
     builder.add_edge("plan_retrieval", "search_knowledge")
-    builder.add_edge("search_knowledge", "generate_code")
+    builder.add_edge("search_knowledge", "create_implementation_plan")
+    builder.add_edge("create_implementation_plan", "review_implementation_plan")
+    builder.add_conditional_edges(
+        "review_implementation_plan",
+        route_after_review,
+        {
+            "generate_code": "generate_code",
+            "search_missing_knowledge": "search_missing_knowledge",
+        },
+    )
+    builder.add_edge("search_missing_knowledge", "revise_implementation_plan")
+    builder.add_edge("revise_implementation_plan", "review_revised_plan")
+    builder.add_edge("review_revised_plan", "generate_code")
     builder.add_edge("generate_code", "validate_code")
     builder.add_edge("validate_code", END)
     return builder.compile()
+
+
+def _merge_context(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group:
+            source = str(item.get("source", ""))
+            if source in seen:
+                continue
+            seen.add(source)
+            merged.append(item)
+    return merged

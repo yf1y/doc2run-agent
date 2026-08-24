@@ -7,7 +7,14 @@ from doc2run_agent.retriever import LocalKnowledgeBase
 from doc2run_agent.runner import LocalPythonRunner
 from doc2run_agent.session_store import FileSessionStore
 
-from conftest import FakeModel
+from conftest import (
+    FakeModel,
+    fix_plan_response,
+    implementation_plan_response,
+    patch_response,
+    patch_review_response,
+    plan_review_response,
+)
 
 
 def complete_requirements_response():
@@ -54,6 +61,8 @@ def test_orchestrator_waits_for_confirmation_then_runs_code(tmp_path):
         [
             complete_requirements_response(),
             json.dumps({"queries": ["JSON serialization"]}),
+            implementation_plan_response(),
+            plan_review_response(),
             "import json\nprint(json.dumps({'ok': True}))",
         ],
     )
@@ -66,6 +75,14 @@ def test_orchestrator_waits_for_confirmation_then_runs_code(tmp_path):
     assert result["run_result"]["stdout"].strip() == '{"ok": true}'
     assert (store.session_directory("demo") / "task_specs" / "task_spec_v1.json").exists()
     assert (store.session_directory("demo") / "runs" / "initial" / "run.json").exists()
+    assert (store.session_directory("demo") / "planning" / "implementation_plan.json").exists()
+    assert (store.session_directory("demo") / "planning" / "api_context.md").exists()
+    assert (store.session_directory("demo") / "planning" / "generation_notes.md").exists()
+    assert (store.session_directory("demo") / "contexts" / "manifest.json").exists()
+    context_manifest = json.loads(
+        (store.session_directory("demo") / "contexts" / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert {item["stage"] for item in context_manifest} >= {"requirements", "code_generation"}
     assert {"requirements_agent", "generation_agent", "fix_agent", "execute"}.issubset(
         orchestrator.graph.get_graph().nodes
     )
@@ -77,9 +94,15 @@ def test_orchestrator_repairs_failed_execution(tmp_path):
         [
             complete_requirements_response(),
             json.dumps({"queries": ["JSON serialization"]}),
+            implementation_plan_response(),
+            plan_review_response(),
             "raise RuntimeError('broken')",
-            json.dumps({"queries": ["RuntimeError output repair"]}),
-            "import json\nprint(json.dumps({'fixed': True}))",
+            fix_plan_response(),
+            patch_response(
+                "raise RuntimeError('broken')",
+                "import json\nprint(json.dumps({'fixed': True}))",
+            ),
+            patch_review_response(),
         ],
     )
 
@@ -90,6 +113,9 @@ def test_orchestrator_repairs_failed_execution(tmp_path):
     assert result["fix_attempts"] == 1
     assert len(result["run_history"]) == 2
     assert (store.session_directory("repair-demo") / "runs" / "fix_001" / "run.json").exists()
+    assert (store.session_directory("repair-demo") / "runs" / "fix_001" / "fix_plan.json").exists()
+    assert (store.session_directory("repair-demo") / "runs" / "fix_001" / "code_patch.json").exists()
+    assert (store.session_directory("repair-demo") / "runs" / "fix_001" / "patch_review.json").exists()
 
 
 def test_orchestrator_routes_each_stage_to_its_configured_model(tmp_path):
@@ -100,10 +126,19 @@ def test_orchestrator_routes_each_stage_to_its_configured_model(tmp_path):
     )
     requirements_model = FakeModel([complete_requirements_response()])
     code_model = FakeModel(
-        [json.dumps({"queries": ["JSON serialization"]}), "raise RuntimeError('broken')"]
+        [
+            json.dumps({"queries": ["JSON serialization"]}),
+            implementation_plan_response(),
+            plan_review_response(),
+            "raise RuntimeError('broken')",
+        ]
     )
     fix_model = FakeModel(
-        [json.dumps({"queries": ["RuntimeError repair"]}), "print('{}')"]
+        [
+            fix_plan_response(),
+            patch_response("raise RuntimeError('broken')", "print('{}')"),
+            patch_review_response(),
+        ]
     )
     store = FileSessionStore(tmp_path / "sessions")
     orchestrator = Doc2RunOrchestrator(
@@ -118,8 +153,8 @@ def test_orchestrator_routes_each_stage_to_its_configured_model(tmp_path):
 
     assert result["status"] == "succeeded"
     assert len(requirements_model.calls) == 1
-    assert len(code_model.calls) == 2
-    assert len(fix_model.calls) == 2
+    assert len(code_model.calls) == 4
+    assert len(fix_model.calls) == 3
 
 
 def test_orchestrator_rejects_confirmation_before_requirements_are_complete(tmp_path):
@@ -139,9 +174,14 @@ def test_orchestrator_stops_at_repair_limit(tmp_path):
         [
             complete_requirements_response(),
             json.dumps({"queries": ["JSON serialization"]}),
+            implementation_plan_response(),
+            plan_review_response(),
             "raise RuntimeError('initial')",
-            json.dumps({"queries": ["RuntimeError repair"]}),
-            "raise RuntimeError('still broken')",
+            fix_plan_response(),
+            patch_response(
+                "raise RuntimeError('initial')", "raise RuntimeError('still broken')"
+            ),
+            patch_review_response(),
         ],
         max_fix_attempts=1,
     )
@@ -161,6 +201,8 @@ def test_orchestrator_retries_an_interrupted_generation_from_confirmed_snapshot(
         [
             complete_requirements_response(),
             json.dumps({"queries": ["JSON serialization"]}),
+            implementation_plan_response(),
+            plan_review_response(),
             "print('{}')",
         ],
     )
@@ -184,6 +226,8 @@ def test_orchestrator_requires_reset_after_terminal_state(tmp_path):
         [
             complete_requirements_response(),
             json.dumps({"queries": ["JSON serialization"]}),
+            implementation_plan_response(),
+            plan_review_response(),
             "print('{}')",
         ],
     )

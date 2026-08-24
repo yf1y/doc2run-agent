@@ -24,6 +24,7 @@ class ModelConfig(BaseModel):
     api_key_env: str | None = None
     timeout: float | None = Field(default=None, gt=0)
     max_retries: int | None = Field(default=None, ge=0)
+    context_tokens: int | None = Field(default=None, ge=1000)
 
     @model_validator(mode="after")
     def validate_secret_source(self) -> "ModelConfig":
@@ -116,6 +117,16 @@ def _resolve_role(role: str, models: ModelsConfig) -> ModelSettings:
         default=2,
         field_name=f"models.{role}.max_retries",
     )
+    context_tokens = _first_integer(
+        role_config.context_tokens,
+        models.defaults.context_tokens,
+        os.getenv(f"{env_prefix}_CONTEXT_TOKENS"),
+        os.getenv("DOC2RUN_AGENT_CONTEXT_TOKENS"),
+        default=16_000,
+        field_name=f"models.{role}.context_tokens",
+    )
+    if context_tokens < 1000:
+        raise ValueError(f"models.{role}.context_tokens must be at least 1000")
     return ModelSettings(
         model=model,
         api_base=api_base,
@@ -123,6 +134,7 @@ def _resolve_role(role: str, models: ModelsConfig) -> ModelSettings:
         timeout_seconds=timeout,
         max_retries=max_retries,
         trust_env=_environment_flag("DOC2RUN_AGENT_TRUST_ENV", default=False),
+        context_tokens=context_tokens,
     )
 
 

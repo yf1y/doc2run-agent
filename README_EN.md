@@ -13,17 +13,18 @@ Put your private SDK or API documentation in `knowledge/`, then describe the aut
 The result is not merely code that looks plausible. It is an **executed, traceable, resumable automation** with evidence for every step.
 
 ```text
-Your request → clarify → confirm → retrieve private docs → generate
-             → validate → execute → repair failures → persist artifacts
+Your request → clarify → confirm → retrieve docs → write and review a plan
+             → retrieve missing details → generate → validate → execute
+             → apply and review a local repair → persist artifacts
 ```
 
 | Typical one-shot generation | Doc2Run Agent |
 |---|---|
 | Guesses from a short prompt | Confirms goals, I/O, constraints, and acceptance criteria first |
-| May invent private SDK usage | Retrieves local documentation before generation and repair |
+| May invent private SDK usage | Organizes API material and reviews a sourced implementation plan first |
 | Stops after printing code | Validates, executes, and captures stdout/stderr |
-| Hands failures back to you | Classifies errors and repairs within a hard retry limit |
-| Leaves little evidence | Versions the spec, retrieval context, code, and every run |
+| Hands failures back to you | Plans a small edit, checks it, and repairs within a hard retry limit |
+| Leaves little evidence | Saves plans, exact model contexts, code, and every run |
 
 An interaction starts like this:
 
@@ -52,15 +53,19 @@ Doc2Run Agent separates an automation task into three focused stages:
 | Stage | Responsibility | Why it matters |
 |---|---|---|
 | **Requirements Agent** | Clarifies the request and builds a typed `TaskSpec` | Prevents coding against vague requirements |
-| **Generation Agent** | Plans retrieval, reads documentation, and generates a complete script | Grounds private API usage in actual docs |
-| **Fix Agent** | Diagnoses validation/runtime failures, retrieves targeted context, and rewrites | Keeps the workflow moving after the first failure |
+| **Generation Agent** | Retrieves documentation, writes and reviews an implementation plan, then generates a script | Separates document understanding from coding for smaller models |
+| **Fix Agent** | Plans, retrieves, applies, and reviews a local code edit | Preserves working code instead of rewriting everything by default |
 
 Execution is controlled by deterministic Python code, not by another LLM agent. Generation begins only after all required sections are explicit and the user enters `/confirm`.
 
 Key capabilities:
 
 - **Requirements confirmation gate** for goals, I/O, constraints, and acceptance criteria.
-- **Local documentation RAG** over `.md`, `.txt`, `.json`, and `.jsonl` files with source-tagged evidence.
+- **Two-pass local retrieval**: first for APIs and domain material, then for gaps found while reviewing the plan.
+- **Optional domain material** in ordinary knowledge subdirectories; the core schema contains no power-grid or other domain-specific fields.
+- **Plan before code** with JSON artifacts that expose missing information before generation.
+- **Controlled local repair** with exact replacements, a review step, and full rewrite only as a later fallback.
+- **Traceable contexts** containing the exact prompts, responses, sources, and estimated input tokens for each model call.
 - **Independent model selection** for requirements, generation, and repair—or one shared model.
 - **Generate–validate–execute–repair loop** with syntax, import, destructive-call, and absolute-write checks.
 - **Resumable sessions** that preserve conversation and workflow state across restarts.
@@ -124,7 +129,10 @@ models:
     api_key_env: OPENAI_API_KEY
     timeout: 120
     max_retries: 2
+    context_tokens: 16000
 ```
+
+`context_tokens` is the workflow's estimated input limit for one model call. An oversized call fails explicitly instead of silently truncating the TaskSpec, code, or API signatures. It can also be configured per stage.
 
 Store the credential in `.env`:
 
@@ -162,12 +170,17 @@ Place SDK/API references under `knowledge/`:
 
 ```text
 knowledge/
-├── internal_sdk.md
-├── api_reference.json
-└── usage_notes.txt
+├── api/
+│   ├── internal_sdk.md
+│   └── api_reference.json
+└── domains/                     # optional
+    └── power/
+        ├── overview.md
+        ├── building_rules.md
+        └── examples.json
 ```
 
-Before generation and repair, Doc2Run Agent plans focused queries and sends only the most relevant chunks to the model. Keep the bundled `demo_record_sdk.md` for a credential-free first run.
+The optional domain directory can provide general concepts, construction rules, and examples without changing the core workflow schema. Before generation, Doc2Run Agent retrieves relevant material, reviews an implementation plan, and searches again when the review finds a gap. Keep the bundled `demo_record_sdk.md` for a credential-free first run.
 
 ### 3.3 Run the interactive CLI
 
@@ -210,9 +223,12 @@ Every session gets an isolated artifact directory:
 ```text
 sessions/<session-id>/
 ├── session.json                 # conversation and workflow state
+├── decisions.md                 # explicit user choices and corrections
 ├── task_specs/                  # immutable confirmed spec versions
-├── retrieval/                   # retrieval evidence for every round
-├── runs/                        # generated/repaired code and run results
+├── retrieval/                   # initial, follow-up, and repair searches
+├── planning/                    # selected docs, plan, review, and disclosed model choices
+├── contexts/                    # exact model inputs and outputs
+├── runs/                        # code, run results, edit plans, and edit reviews
 └── workspace/generated.py       # final executed script
 ```
 
@@ -232,6 +248,8 @@ doc2run-agent/
 │   │   ├── fix_agent.py           # failure diagnosis and repair
 │   │   ├── orchestrator.py        # top-level workflow and state gates
 │   │   ├── retriever.py           # local knowledge retrieval
+│   │   ├── context.py             # context budgets, log trimming, and call records
+│   │   ├── code_edits.py          # exact local code replacement
 │   │   ├── validation.py          # deterministic static validation
 │   │   ├── runner.py              # timeout-controlled execution
 │   │   ├── session_store.py       # persistence and recovery

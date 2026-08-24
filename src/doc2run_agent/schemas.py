@@ -65,10 +65,16 @@ class RequirementsDecision(StrictModel):
     )
     questions: list[str] = Field(default_factory=list)
     assistant_message: str = ""
+    decisions: list[str] = Field(default_factory=list)
 
     @field_validator("questions")
     @classmethod
     def clean_questions(cls, values: list[str]) -> list[str]:
+        return [value.strip() for value in values if value.strip()]
+
+    @field_validator("decisions")
+    @classmethod
+    def clean_decisions(cls, values: list[str]) -> list[str]:
         return [value.strip() for value in values if value.strip()]
 
 
@@ -81,7 +87,71 @@ class RetrievalQueryPlan(StrictModel):
         cleaned = [value.strip() for value in values if value.strip()]
         if not cleaned:
             raise ValueError("At least one retrieval query is required")
-        return cleaned[:2]
+        return cleaned[:4]
+
+
+class ApiUsage(StrictModel):
+    purpose: str
+    api: str
+    source: str = ""
+
+
+class ImplementationPlan(StrictModel):
+    summary: str
+    required_inputs: list[str] = Field(default_factory=list)
+    steps: list[str]
+    api_usage: list[ApiUsage] = Field(default_factory=list)
+    design_choices: list[str] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+
+
+class PlanReview(StrictModel):
+    ok: bool
+    problems: list[str] = Field(default_factory=list)
+    search_queries: list[str] = Field(default_factory=list)
+
+    @field_validator("search_queries")
+    @classmethod
+    def clean_search_queries(cls, values: list[str]) -> list[str]:
+        return [value.strip() for value in values if value.strip()][:4]
+
+
+class FixPlan(StrictModel):
+    problem: str
+    location: str
+    change: str
+    keep_unchanged: list[str] = Field(default_factory=list)
+    search_queries: list[str] = Field(default_factory=list)
+
+    @field_validator("search_queries")
+    @classmethod
+    def clean_fix_queries(cls, values: list[str]) -> list[str]:
+        return [value.strip() for value in values if value.strip()][:4]
+
+
+class CodeEdit(StrictModel):
+    old: str
+    new: str
+
+
+class CodePatch(StrictModel):
+    edits: list[CodeEdit] = Field(default_factory=list)
+    replacement_code: str = ""
+
+
+class PatchReview(StrictModel):
+    ok: bool
+    checks: list[str] = Field(default_factory=list)
+    problems: list[str] = Field(default_factory=list)
+
+
+class ModelContextRecord(StrictModel):
+    stage: str
+    system_prompt: str
+    user_prompt: str
+    response: str
+    estimated_tokens: int
+    sources: list[str] = Field(default_factory=list)
 
 
 class CodeValidation(StrictModel):
@@ -141,9 +211,12 @@ class SessionRecord(StrictModel):
     draft_spec: TaskSpec = Field(default_factory=TaskSpec)
     confirmed_spec: TaskSpec | None = None
     confirmed_sections: list[str] = Field(default_factory=list)
+    decisions: list[str] = Field(default_factory=list)
     pending_questions: list[str] = Field(default_factory=list)
     retrieval_queries: list[str] = Field(default_factory=list)
     retrieved_context: list[dict[str, Any]] = Field(default_factory=list)
+    implementation_plan: dict[str, Any] | None = None
+    plan_review: dict[str, Any] | None = None
     generated_code: str = ""
     code_validation: CodeValidation | None = None
     run_result: RunResult | None = None
@@ -159,9 +232,22 @@ class OrchestratorState(TypedDict, total=False):
     user_input: str
     session: dict[str, Any]
     task_spec: dict[str, Any]
+    decisions: list[str]
     retrieval_queries: list[str]
+    additional_retrieval_queries: list[str]
     retrieved_context: list[dict[str, Any]]
+    additional_context: list[dict[str, Any]]
     fix_context: list[dict[str, Any]]
+    implementation_plan: dict[str, Any]
+    initial_implementation_plan: dict[str, Any]
+    plan_review: dict[str, Any]
+    initial_plan_review: dict[str, Any]
+    fix_plan: dict[str, Any]
+    code_patch: dict[str, Any]
+    patch_review: dict[str, Any]
+    patch_error: str
+    previous_code: str
+    context_records: list[dict[str, Any]]
     code: str
     code_validation: dict[str, Any]
     run_result: dict[str, Any]

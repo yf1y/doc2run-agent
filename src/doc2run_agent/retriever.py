@@ -15,6 +15,8 @@ SUPPORTED_SUFFIXES = {".md", ".txt", ".json", ".jsonl"}
 class KnowledgeChunk:
     source: str
     content: str
+    heading: str = ""
+    kind: str = "text"
 
 
 @dataclass(frozen=True)
@@ -22,9 +24,17 @@ class RetrievedChunk:
     source: str
     content: str
     score: float
+    heading: str = ""
+    kind: str = "text"
 
     def to_dict(self) -> dict[str, object]:
-        return {"source": self.source, "content": self.content, "score": self.score}
+        return {
+            "source": self.source,
+            "content": self.content,
+            "score": self.score,
+            "heading": self.heading,
+            "kind": self.kind,
+        }
 
 
 class LocalKnowledgeBase:
@@ -36,6 +46,11 @@ class LocalKnowledgeBase:
         self._document_terms = [Counter(self._terms(chunk.content)) for chunk in chunks]
         self._idf = self._build_idf(self._document_terms)
         self._vectors = [self._tfidf_vector(terms) for terms in self._document_terms]
+        self._word_terms = [Counter(_word_list(chunk.content)) for chunk in chunks]
+        self._word_document_frequency = self._build_word_document_frequency(self._word_terms)
+        self._average_word_count = (
+            sum(sum(terms.values()) for terms in self._word_terms) / len(self._word_terms)
+        )
 
     @classmethod
     def from_directory(cls, directory: str | Path) -> "LocalKnowledgeBase":
@@ -48,9 +63,13 @@ class LocalKnowledgeBase:
             if not path.is_file() or path.suffix.lower() not in SUPPORTED_SUFFIXES:
                 continue
             for index, text in enumerate(_read_entries(path), start=1):
-                for part_index, part in enumerate(_chunk_text(text), start=1):
+                for part_index, (part, heading, kind) in enumerate(
+                    _chunk_document(text, path.suffix.lower()), start=1
+                ):
                     source = f"{path.relative_to(root)}#{index}.{part_index}"
-                    chunks.append(KnowledgeChunk(source=source, content=part))
+                    chunks.append(
+                        KnowledgeChunk(source=source, content=part, heading=heading, kind=kind)
+                    )
 
         return cls(chunks)
 
@@ -63,17 +82,61 @@ class LocalKnowledgeBase:
         query_terms = Counter(self._terms(query))
         query_vector = self._tfidf_vector(query_terms)
         query_words = _words(query)
-        ranked: list[RetrievedChunk] = []
+        query_identifiers = _identifiers(query)
+        raw_scores: list[tuple[KnowledgeChunk, float, float, float]] = []
 
-        for chunk, vector in zip(self._chunks, self._vectors, strict=True):
-            score = _cosine_similarity(query_vector, vector)
+        for chunk, vector, word_terms in zip(
+            self._chunks, self._vectors, self._word_terms, strict=True
+        ):
+            character_score = _cosine_similarity(query_vector, vector)
             chunk_words = _words(chunk.content)
-            if query_words:
-                score += 0.05 * len(query_words & chunk_words) / len(query_words)
-            ranked.append(RetrievedChunk(chunk.source, chunk.content, score))
+            overlap = len(query_words & chunk_words) / len(query_words) if query_words else 0.0
+            bm25 = self._bm25(query_words, word_terms)
+            identifiers = _identifiers(chunk.content)
+            identifier_overlap = (
+                len(query_identifiers & identifiers) / len(query_identifiers)
+                if query_identifiers
+                else 0.0
+            )
+            if chunk.heading:
+                heading_words = _words(chunk.heading)
+                overlap = max(overlap, len(query_words & heading_words) / len(query_words) if query_words else 0.0)
+            raw_scores.append((chunk, character_score, bm25, overlap + identifier_overlap))
+
+        maximum_bm25 = max((item[2] for item in raw_scores), default=0.0) or 1.0
+        ranked = [
+            RetrievedChunk(
+                chunk.source,
+                chunk.content,
+                0.35 * character_score + 0.45 * (bm25 / maximum_bm25) + 0.20 * overlap,
+                chunk.heading,
+                chunk.kind,
+            )
+            for chunk, character_score, bm25, overlap in raw_scores
+        ]
 
         ranked.sort(key=lambda item: item.score, reverse=True)
         return ranked[: min(top_k, len(ranked))]
+
+    def _bm25(self, query_words: set[str], document: Counter[str]) -> float:
+        if not query_words or not document:
+            return 0.0
+        document_count = len(self._word_terms)
+        document_length = sum(document.values())
+        k1 = 1.5
+        b = 0.75
+        score = 0.0
+        for word in query_words:
+            frequency = document.get(word, 0)
+            if not frequency:
+                continue
+            document_frequency = self._word_document_frequency.get(word, 0)
+            idf = math.log(1 + (document_count - document_frequency + 0.5) / (document_frequency + 0.5))
+            denominator = frequency + k1 * (
+                1 - b + b * document_length / (self._average_word_count or 1.0)
+            )
+            score += idf * frequency * (k1 + 1) / denominator
+        return score
 
     def _terms(self, text: str) -> list[str]:
         normalized = re.sub(r"\s+", " ", text.lower()).strip()
@@ -93,6 +156,13 @@ class LocalKnowledgeBase:
             term: math.log((1 + document_count) / (1 + count)) + 1
             for term, count in frequency.items()
         }
+
+    @staticmethod
+    def _build_word_document_frequency(documents: list[Counter[str]]) -> Counter[str]:
+        frequency: Counter[str] = Counter()
+        for document in documents:
+            frequency.update(document.keys())
+        return frequency
 
     def _tfidf_vector(self, terms: Counter[str]) -> dict[str, float]:
         total = sum(terms.values()) or 1
@@ -116,24 +186,60 @@ def _read_entries(path: Path) -> list[str]:
     return [raw]
 
 
-def _chunk_text(text: str, max_characters: int = 1400) -> list[str]:
-    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
+def _chunk_document(text: str, suffix: str) -> list[tuple[str, str, str]]:
+    if suffix == ".md":
+        return _chunk_markdown(text)
+    return [(part, "", "data" if suffix in {".json", ".jsonl"} else "text") for part in _chunk_text(text)]
+
+
+def _chunk_markdown(text: str) -> list[tuple[str, str, str]]:
+    sections: list[tuple[str, list[str]]] = []
+    heading = ""
+    lines: list[str] = []
+    in_fence = False
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        if not in_fence and re.match(r"^#{1,6}\s+", line):
+            if lines:
+                sections.append((heading, lines))
+            heading = re.sub(r"^#{1,6}\s+", "", line).strip()
+            lines = [line]
+        else:
+            lines.append(line)
+    if lines:
+        sections.append((heading, lines))
+
+    chunks: list[tuple[str, str, str]] = []
+    for section_heading, section_lines in sections:
+        section = "\n".join(section_lines).strip()
+        kind = "code" if "```" in section else "text"
+        chunks.extend((part, section_heading, kind) for part in _chunk_text(section))
+    return chunks
+
+
+def _chunk_text(text: str, max_characters: int = 1800) -> list[str]:
+    blocks = [
+        match.group(0).strip()
+        for match in re.finditer(r"```[\s\S]*?```|(?:[^\n]|\n(?!\s*\n))+", text)
+        if match.group(0).strip()
+    ]
     chunks: list[str] = []
     current = ""
-    for paragraph in paragraphs:
-        if len(paragraph) > max_characters:
+    for block in blocks:
+        if len(block) > max_characters and not block.startswith("```"):
             if current:
                 chunks.append(current)
                 current = ""
             chunks.extend(
-                paragraph[index : index + max_characters]
-                for index in range(0, len(paragraph), max_characters)
+                block[index : index + max_characters]
+                for index in range(0, len(block), max_characters)
             )
             continue
-        candidate = f"{current}\n\n{paragraph}".strip()
+        candidate = f"{current}\n\n{block}".strip()
         if current and len(candidate) > max_characters:
             chunks.append(current)
-            current = paragraph
+            current = block
         else:
             current = candidate
     if current:
@@ -142,7 +248,21 @@ def _chunk_text(text: str, max_characters: int = 1400) -> list[str]:
 
 
 def _words(text: str) -> set[str]:
-    return {word for word in re.findall(r"[a-zA-Z_][a-zA-Z0-9_]{2,}", text.lower())}
+    return set(_word_list(text))
+
+
+def _word_list(text: str) -> list[str]:
+    latin = re.findall(r"[a-zA-Z_][a-zA-Z0-9_]{1,}", text.lower())
+    chinese = re.findall(r"[\u4e00-\u9fff]{2,}", text)
+    return latin + chinese
+
+
+def _identifiers(text: str) -> set[str]:
+    return {
+        value.lower()
+        for value in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*\b", text)
+        if "_" in value or "." in value or any(character.isupper() for character in value)
+    }
 
 
 def _cosine_similarity(left: dict[str, float], right: dict[str, float]) -> float:
@@ -154,4 +274,3 @@ def _cosine_similarity(left: dict[str, float], right: dict[str, float]) -> float
     if not left_norm or not right_norm:
         return 0.0
     return dot / (left_norm * right_norm)
-

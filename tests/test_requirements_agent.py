@@ -69,3 +69,22 @@ def test_requirements_agent_rejects_unknown_spec_fields():
             SessionRecord(session_id="demo"),
             "Do work",
         )
+
+
+def test_requirements_agent_keeps_explicit_user_decisions():
+    response = json.dumps(
+        {
+            "spec_patch": {"objective": "Create a network"},
+            "confirmed_sections": ["goal"],
+            "questions": ["Which input file should be used?"],
+            "assistant_message": "The goal is clear.",
+            "decisions": ["Layout means connectivity, not drawing coordinates."],
+        }
+    )
+
+    record = RequirementsAgent(FakeModel([response])).process(
+        SessionRecord(session_id="demo"),
+        "By layout I mean connectivity, not drawing coordinates.",
+    )
+
+    assert record.decisions == ["Layout means connectivity, not drawing coordinates."]
