@@ -48,8 +48,7 @@ agent> Documentation retrieval, generation, validation, and execution completed.
 
 ## 1. Overview
 
-Doc2Run Agent is a fixed, staged workflow. The Agent names in the code describe role boundaries;
-they do not imply autonomous agents exchanging messages or organizing their own collaboration:
+Doc2Run Agent divides an automation task into three connected stages:
 
 | Stage | Responsibility | Why it matters |
 |---|---|---|
