@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from .context import complete_and_record, context_sources
 from .knowledge_tools import KnowledgeSearchTool
 from .llm import TextModel
+from .memory_store import ScenarioMemoryStore
 from .parsing import parse_model
 from .prompts import (
     CODE_SYSTEM,
@@ -25,7 +26,12 @@ from .schemas import ImplementationPlan, OrchestratorState, PlanReview, Retrieva
 from .validation import validate_code
 
 
-def build_generation_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool):
+def build_generation_agent_graph(
+    model: TextModel,
+    knowledge_tool: KnowledgeSearchTool,
+    scenario_memory: ScenarioMemoryStore | None = None,
+    domain: str = "",
+):
     def plan_retrieval(state: OrchestratorState) -> dict[str, object]:
         prompt = retrieval_plan_request(state["task_spec"], state.get("decisions", []))
         response, records = complete_and_record(
@@ -44,17 +50,27 @@ def build_generation_agent_graph(model: TextModel, knowledge_tool: KnowledgeSear
 
     def retrieve(state: OrchestratorState) -> dict[str, object]:
         context = knowledge_tool.search_many(state["retrieval_queries"])
-        return {"retrieved_context": context}
+        scenario_context: list[dict[str, Any]] = []
+        if scenario_memory is not None and domain:
+            spec = TaskSpec.model_validate(state["task_spec"])
+            scenario_query = " ".join([spec.objective, *spec.steps, *spec.acceptance_criteria])
+            scenario_context = scenario_memory.search(domain, scenario_query, top_k=2)
+        return {"retrieved_context": context, "scenario_context": scenario_context}
 
     def create_plan(state: OrchestratorState) -> dict[str, object]:
-        prompt = implementation_plan_request(state["task_spec"], state["retrieved_context"])
+        prompt = implementation_plan_request(
+            state["task_spec"], state["retrieved_context"], state.get("scenario_context", [])
+        )
         response, records = complete_and_record(
             model,
             stage="implementation_plan",
             system_prompt=IMPLEMENTATION_PLAN_SYSTEM,
             user_prompt=prompt,
             current=state.get("context_records"),
-            sources=context_sources(state["retrieved_context"], prompt),
+            sources=context_sources(
+                _merge_context(state["retrieved_context"], state.get("scenario_context", [])),
+                prompt,
+            ),
         )
         plan = parse_model(response, ImplementationPlan)
         value = plan.model_dump(mode="json")
@@ -66,7 +82,10 @@ def build_generation_agent_graph(model: TextModel, knowledge_tool: KnowledgeSear
 
     def review_plan(state: OrchestratorState) -> dict[str, object]:
         prompt = plan_review_request(
-            state["task_spec"], state["implementation_plan"], state["retrieved_context"]
+            state["task_spec"],
+            state["implementation_plan"],
+            state["retrieved_context"],
+            state.get("scenario_context", []),
         )
         response, records = complete_and_record(
             model,
@@ -99,6 +118,7 @@ def build_generation_agent_graph(model: TextModel, knowledge_tool: KnowledgeSear
             state["implementation_plan"],
             state["plan_review"],
             state.get("additional_context", []),
+            state.get("scenario_context", []),
         )
         response, records = complete_and_record(
             model,
@@ -116,6 +136,7 @@ def build_generation_agent_graph(model: TextModel, knowledge_tool: KnowledgeSear
             state["task_spec"],
             state["implementation_plan"],
             _merge_context(state["retrieved_context"], state.get("additional_context", [])),
+            state.get("scenario_context", []),
         )
         response, records = complete_and_record(
             model,
@@ -134,7 +155,11 @@ def build_generation_agent_graph(model: TextModel, knowledge_tool: KnowledgeSear
     def generate(state: OrchestratorState) -> dict[str, object]:
         context = _merge_context(state["retrieved_context"], state.get("additional_context", []))
         prompt = code_request(
-            state["task_spec"], context, state["implementation_plan"], state["plan_review"]
+            state["task_spec"],
+            context,
+            state["implementation_plan"],
+            state["plan_review"],
+            state.get("scenario_context", []),
         )
         response, records = complete_and_record(
             model,
@@ -142,7 +167,9 @@ def build_generation_agent_graph(model: TextModel, knowledge_tool: KnowledgeSear
             system_prompt=CODE_SYSTEM,
             user_prompt=prompt,
             current=state.get("context_records"),
-            sources=context_sources(context, prompt),
+            sources=context_sources(
+                _merge_context(context, state.get("scenario_context", [])), prompt
+            ),
         )
         code = sanitize_code(response)
         if not code:

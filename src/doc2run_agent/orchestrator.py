@@ -10,6 +10,8 @@ from .errors import classify_failure
 from .fix_agent import build_fix_agent_graph
 from .knowledge_tools import KnowledgeSearchTool
 from .llm import AgentModels, TextModel, as_agent_models
+from .memory_agent import MemoryAgent
+from .memory_store import ScenarioMemoryStore
 from .requirements_agent import RequirementsAgent, missing_sections
 from .runner import LocalPythonRunner
 from .schemas import CodeValidation, OrchestratorState, RunResult, SessionRecord, TaskSpec
@@ -25,36 +27,145 @@ class Doc2RunOrchestrator:
         runner: LocalPythonRunner | None = None,
         *,
         max_fix_attempts: int = 3,
+        scenario_memory: ScenarioMemoryStore | None = None,
+        domain: str = "",
     ) -> None:
         if max_fix_attempts < 0:
             raise ValueError("max_fix_attempts cannot be negative")
         self.store = store
         self.max_fix_attempts = max_fix_attempts
+        self.domain = domain
+        self.scenario_memory = scenario_memory
+        selected_models = as_agent_models(models)
+        self.memory_agent = (
+            MemoryAgent(selected_models.code, scenario_memory) if scenario_memory is not None else None
+        )
         self.graph = build_orchestrator_graph(
-            as_agent_models(models),
+            selected_models,
             knowledge_tool,
             store,
             runner or LocalPythonRunner(),
             max_fix_attempts=max_fix_attempts,
+            scenario_memory=scenario_memory,
+            domain=domain,
         )
 
     def handle_message(self, session_id: str, user_input: str) -> dict[str, Any]:
         record = self.store.load_or_create(session_id)
         if record.phase in {"generating_code", "executing", "repairing"}:
             raise ValueError("Generation is in progress or was interrupted; enter /confirm to retry it")
-        if record.phase in {"succeeded", "failed"}:
-            raise ValueError("This session is complete; enter /reset or choose a new session ID")
+        if record.phase in {"awaiting_review", "failed"}:
+            self._require_domain_match(record)
+            return self._invoke(record, event="refine", user_input=user_input)
+        if record.phase in {"memory_candidate_ready", "approved", "succeeded"}:
+            raise ValueError("This version is already approved; enter /reset for a new task")
         return self._invoke(record, event="message", user_input=user_input)
 
     def confirm(self, session_id: str) -> dict[str, Any]:
         record = self.store.load_or_create(session_id)
         return self._invoke(record, event="confirm")
 
+    def approve(self, session_id: str, note: str = "") -> dict[str, Any]:
+        record = self.store.load_or_create(session_id)
+        self._require_domain_match(record)
+        if record.phase != "awaiting_review" or not record.run_result or not record.run_result.ok:
+            raise ValueError("Only a successfully executed version awaiting review can be approved")
+        record.approval_note = note.strip()
+        if not self.domain:
+            record.phase = "approved"
+            record.status = "approved"
+            self.store.save(record)
+            return {
+                "session": record.model_dump(mode="json"),
+                "status": "approved",
+                "assistant_message": "Code approved. No domain was selected, so no scenario memory was created.",
+                "run_result": record.run_result.model_dump(mode="json"),
+            }
+        if self.memory_agent is None:
+            raise ValueError("Scenario memory is not configured")
+        result = self.memory_agent.create_candidate(
+            session_id=session_id,
+            domain=self.domain,
+            task_spec=record.confirmed_spec.model_dump(mode="json") if record.confirmed_spec else {},
+            implementation_plan=record.implementation_plan or {},
+            code=record.generated_code,
+            run_result=record.run_result.model_dump(mode="json"),
+            approval_note=record.approval_note,
+        )
+        record.active_domain = self.domain
+        record.memory_candidate_id = result["candidate_id"]
+        record.memory_candidate = result["candidate"]
+        record.memory_validation_errors = result["validation_errors"]
+        record.memory_review = result["review"]
+        record.phase = "memory_candidate_ready"
+        record.status = "memory_candidate_ready"
+        self.store.save(record)
+        ArtifactManager(self.store).save_context_records(session_id, result["context_records"])
+        review_ok = bool(result["review"].get("ok")) and not result["validation_errors"]
+        message = (
+            "Code approved. The isolated memory review passed; enter /remember to add this scenario."
+            if review_ok
+            else "Code approved, but the scenario candidate failed review. Inspect it or enter /reject-memory."
+        )
+        return {
+            "session": record.model_dump(mode="json"),
+            "status": "memory_candidate_ready",
+            "assistant_message": message,
+            "memory_candidate_path": result["path"],
+            "memory_review": result["review"],
+            "memory_validation_errors": result["validation_errors"],
+            "run_result": record.run_result.model_dump(mode="json"),
+        }
+
+    def remember(self, session_id: str) -> dict[str, Any]:
+        record = self.store.load_or_create(session_id)
+        self._require_domain_match(record)
+        if record.phase != "memory_candidate_ready" or not record.memory_candidate_id:
+            raise ValueError("There is no pending scenario candidate")
+        if self.scenario_memory is None or not record.active_domain:
+            raise ValueError("Scenario memory is not configured")
+        path = self.scenario_memory.approve(record.active_domain, record.memory_candidate_id)
+        record.phase = "approved"
+        record.status = "approved"
+        self.store.save(record)
+        return {
+            "session": record.model_dump(mode="json"),
+            "status": "approved",
+            "assistant_message": "Scenario memory approved and added to this domain only.",
+            "memory_path": str(path),
+        }
+
+    def reject_memory(self, session_id: str) -> dict[str, Any]:
+        record = self.store.load_or_create(session_id)
+        self._require_domain_match(record)
+        if record.phase != "memory_candidate_ready" or not record.memory_candidate_id:
+            raise ValueError("There is no pending scenario candidate")
+        if self.scenario_memory is None or not record.active_domain:
+            raise ValueError("Scenario memory is not configured")
+        path = self.scenario_memory.reject(record.active_domain, record.memory_candidate_id)
+        record.phase = "approved"
+        record.status = "approved"
+        self.store.save(record)
+        return {
+            "session": record.model_dump(mode="json"),
+            "status": "approved",
+            "assistant_message": "Scenario candidate rejected and archived; the code remains approved.",
+            "memory_path": str(path),
+        }
+
+    def _require_domain_match(self, record: SessionRecord) -> None:
+        if record.confirmed_spec is not None and record.active_domain != self.domain:
+            selected = record.active_domain or "(disabled)"
+            current = self.domain or "(disabled)"
+            raise ValueError(
+                f"Session domain is {selected}, but this run selected {current}; reopen it with the original --domain"
+            )
+
     def _invoke(
         self,
         record: SessionRecord,
         *,
-        event: Literal["message", "confirm"],
+        event: Literal["message", "confirm", "refine"],
         user_input: str = "",
     ) -> dict[str, Any]:
         return self.graph.invoke(
@@ -75,15 +186,53 @@ def build_orchestrator_graph(
     runner: LocalPythonRunner,
     *,
     max_fix_attempts: int,
+    scenario_memory: ScenarioMemoryStore | None = None,
+    domain: str = "",
 ):
     models = as_agent_models(models)
     requirements_agent = RequirementsAgent(models.requirements)
-    generation_graph = build_generation_agent_graph(models.code, knowledge_tool)
+    generation_graph = build_generation_agent_graph(
+        models.code, knowledge_tool, scenario_memory=scenario_memory, domain=domain
+    )
     fix_graph = build_fix_agent_graph(models.fix, knowledge_tool)
     artifacts = ArtifactManager(store)
 
-    def route_event(state: OrchestratorState) -> Literal["requirements_agent", "confirm_task"]:
-        return "requirements_agent" if state["event"] == "message" else "confirm_task"
+    def route_event(
+        state: OrchestratorState,
+    ) -> Literal["requirements_agent", "confirm_task", "begin_refinement"]:
+        if state["event"] == "message":
+            return "requirements_agent"
+        return "confirm_task" if state["event"] == "confirm" else "begin_refinement"
+
+    def begin_refinement(state: OrchestratorState) -> dict[str, Any]:
+        record = SessionRecord.model_validate(state["session"])
+        if not record.confirmed_spec or not record.generated_code:
+            raise ValueError("There is no generated version to refine")
+        base_attempt = record.fix_attempts
+        record.phase = "repairing"
+        record.status = "repairing"
+        self_contained = {
+            "session": record.model_dump(mode="json"),
+            "task_spec": record.confirmed_spec.model_dump(mode="json"),
+            "implementation_plan": record.implementation_plan or {},
+            "retrieved_context": list(record.retrieved_context),
+            "scenario_context": list(record.scenario_context),
+            "code": record.generated_code,
+            "code_validation": (
+                record.code_validation.model_dump(mode="json")
+                if record.code_validation
+                else {"ok": True, "errors": [], "imports": []}
+            ),
+            "run_result": record.run_result.model_dump(mode="json") if record.run_result else {},
+            "run_history": list(record.run_history),
+            "fix_attempts": base_attempt,
+            "fix_attempt_limit": base_attempt + max_fix_attempts,
+            "user_instruction": state["user_input"],
+            "context_records": [],
+            "status": "repairing",
+        }
+        store.save(record)
+        return self_contained
 
     def collect_requirements(state: OrchestratorState) -> dict[str, Any]:
         record = SessionRecord.model_validate(state["session"])
@@ -114,7 +263,10 @@ def build_orchestrator_graph(
             if missing:
                 raise ValueError(f"Task specification is incomplete: {missing}")
             snapshot = store.snapshot_confirmed_spec(record)
+            record.active_domain = domain
         elif record.phase in {"generating_code", "executing", "repairing"} and record.confirmed_spec:
+            if record.active_domain != domain:
+                raise ValueError("The selected domain does not match this confirmed session")
             snapshot = record.confirmed_spec
         else:
             raise ValueError("Task specification is not awaiting confirmation")
@@ -126,6 +278,7 @@ def build_orchestrator_graph(
             "task_spec": snapshot.model_dump(mode="json"),
             "decisions": list(record.decisions),
             "fix_attempts": 0,
+            "fix_attempt_limit": max_fix_attempts,
             "run_history": [],
             "context_records": [],
             "status": "generating_code",
@@ -155,6 +308,7 @@ def build_orchestrator_graph(
             record.session_id,
             initial_context=state["retrieved_context"],
             additional_context=state.get("additional_context", []),
+            scenario_context=state.get("scenario_context", []),
             initial_implementation_plan=state.get(
                 "initial_implementation_plan", state["implementation_plan"]
             ),
@@ -214,12 +368,15 @@ def build_orchestrator_graph(
             "artifact_paths": _append_paths(
                 state, [retrieval_path, *generation_paths, *fix_paths, *context_paths]
             ),
+            # The first patch has now consumed the user's refinement request.
+            # Any later loop must diagnose the new validation/runtime result.
+            "user_instruction": "",
         }
 
     def route_after_validation(state: OrchestratorState) -> Literal["execute", "fix_agent", "failed"]:
         if state["code_validation"]["ok"]:
             return "execute"
-        if state.get("fix_attempts", 0) >= max_fix_attempts:
+        if state.get("fix_attempts", 0) >= state.get("fix_attempt_limit", max_fix_attempts):
             return "failed"
         return "fix_agent"
 
@@ -261,19 +418,21 @@ def build_orchestrator_graph(
     def route_after_execute(state: OrchestratorState) -> Literal["succeeded", "fix_agent", "failed"]:
         if state["run_result"]["ok"]:
             return "succeeded"
-        if state.get("fix_attempts", 0) >= max_fix_attempts:
+        if state.get("fix_attempts", 0) >= state.get("fix_attempt_limit", max_fix_attempts):
             return "failed"
         return "fix_agent"
 
     def complete_success(state: OrchestratorState) -> dict[str, Any]:
         record = _sync_record(SessionRecord.model_validate(state["session"]), state)
-        record.phase = "succeeded"
-        record.status = "succeeded"
+        record.phase = "awaiting_review"
+        record.status = "awaiting_review"
         store.save(record)
         return {
             "session": record.model_dump(mode="json"),
-            "status": "succeeded",
-            "assistant_message": "Code generation and execution completed successfully.",
+            "status": "awaiting_review",
+            "assistant_message": (
+                "Code ran successfully. Describe a change to refine it, or enter /approve to approve this version."
+            ),
         }
 
     def complete_failure(state: OrchestratorState) -> dict[str, Any]:
@@ -295,6 +454,7 @@ def build_orchestrator_graph(
     builder.add_node("requirements_agent", collect_requirements)
     builder.add_node("persist_message", persist_message)
     builder.add_node("confirm_task", confirm_task)
+    builder.add_node("begin_refinement", begin_refinement)
     builder.add_node("generation_agent", generation_graph)
     builder.add_node("persist_code_generation", persist_code_generation)
     builder.add_node("execute", execute)
@@ -305,11 +465,16 @@ def build_orchestrator_graph(
     builder.add_conditional_edges(
         START,
         route_event,
-        {"requirements_agent": "requirements_agent", "confirm_task": "confirm_task"},
+        {
+            "requirements_agent": "requirements_agent",
+            "confirm_task": "confirm_task",
+            "begin_refinement": "begin_refinement",
+        },
     )
     builder.add_edge("requirements_agent", "persist_message")
     builder.add_edge("persist_message", END)
     builder.add_edge("confirm_task", "generation_agent")
+    builder.add_edge("begin_refinement", "fix_agent")
     builder.add_edge("generation_agent", "persist_code_generation")
     builder.add_conditional_edges(
         "persist_code_generation",
@@ -337,6 +502,7 @@ def _sync_record(record: SessionRecord, state: OrchestratorState) -> SessionReco
         record.confirmed_spec = TaskSpec.model_validate(state["task_spec"])
     record.retrieval_queries = list(state.get("retrieval_queries", []))
     record.retrieved_context = list(state.get("retrieved_context", []))
+    record.scenario_context = list(state.get("scenario_context", record.scenario_context))
     if state.get("additional_context"):
         known = {str(item.get("source", "")) for item in record.retrieved_context}
         record.retrieved_context.extend(

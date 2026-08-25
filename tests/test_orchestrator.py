@@ -71,7 +71,7 @@ def test_orchestrator_waits_for_confirmation_then_runs_code(tmp_path):
     result = orchestrator.confirm("demo")
 
     assert waiting["status"] == "awaiting_confirmation"
-    assert result["status"] == "succeeded"
+    assert result["status"] == "awaiting_review"
     assert result["run_result"]["stdout"].strip() == '{"ok": true}'
     assert (store.session_directory("demo") / "task_specs" / "task_spec_v1.json").exists()
     assert (store.session_directory("demo") / "runs" / "initial" / "run.json").exists()
@@ -109,7 +109,7 @@ def test_orchestrator_repairs_failed_execution(tmp_path):
     orchestrator.handle_message("repair-demo", "Print a JSON result")
     result = orchestrator.confirm("repair-demo")
 
-    assert result["status"] == "succeeded"
+    assert result["status"] == "awaiting_review"
     assert result["fix_attempts"] == 1
     assert len(result["run_history"]) == 2
     assert (store.session_directory("repair-demo") / "runs" / "fix_001" / "run.json").exists()
@@ -151,7 +151,7 @@ def test_orchestrator_routes_each_stage_to_its_configured_model(tmp_path):
     orchestrator.handle_message("multi-model", "Print a JSON result")
     result = orchestrator.confirm("multi-model")
 
-    assert result["status"] == "succeeded"
+    assert result["status"] == "awaiting_review"
     assert len(requirements_model.calls) == 1
     assert len(code_model.calls) == 4
     assert len(fix_model.calls) == 3
@@ -215,12 +215,12 @@ def test_orchestrator_retries_an_interrupted_generation_from_confirmed_snapshot(
 
     result = orchestrator.confirm("resume-demo")
 
-    assert result["status"] == "succeeded"
+    assert result["status"] == "awaiting_review"
     assert result["task_spec"]["version"] == snapshot.version
     assert len(list((store.session_directory("resume-demo") / "task_specs").glob("*.json"))) == 1
 
 
-def test_orchestrator_requires_reset_after_terminal_state(tmp_path):
+def test_orchestrator_refines_working_code_then_runs_it_again(tmp_path):
     orchestrator, _ = make_orchestrator(
         tmp_path,
         [
@@ -229,14 +229,17 @@ def test_orchestrator_requires_reset_after_terminal_state(tmp_path):
             implementation_plan_response(),
             plan_review_response(),
             "print('{}')",
+            fix_plan_response(),
+            patch_response("print('{}')", "print('{\"changed\": true}')"),
+            patch_review_response(),
         ],
     )
     orchestrator.handle_message("terminal-demo", "Print a JSON result")
     orchestrator.confirm("terminal-demo")
 
-    try:
-        orchestrator.handle_message("terminal-demo", "Change the output")
-    except ValueError as error:
-        assert "session is complete" in str(error)
-    else:
-        raise AssertionError("Expected a terminal session to require reset")
+    result = orchestrator.handle_message("terminal-demo", "Keep JSON but include changed=true")
+
+    assert result["status"] == "awaiting_review"
+    assert json.loads(result["run_result"]["stdout"]) == {"changed": True}
+    assert result["fix_attempts"] == 1
+    assert len(result["run_history"]) == 2

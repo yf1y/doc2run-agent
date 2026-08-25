@@ -10,6 +10,7 @@ from .llm import TextModel
 from .parsing import parse_model
 from .prompts import (
     FIX_PLAN_SYSTEM,
+    REFINEMENT_PLAN_SYSTEM,
     PATCH_REVIEW_SYSTEM,
     PATCH_SYSTEM,
     fix_plan_request,
@@ -30,6 +31,16 @@ from .validation import validate_code
 
 def build_fix_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool):
     def classify(state: OrchestratorState) -> dict[str, object]:
+        if state.get("user_instruction"):
+            return {
+                "error_info": {
+                    "category": "runtime_error",
+                    "exception_type": "UserRequestedRefinement",
+                    "message": state["user_instruction"],
+                    "traceback": "",
+                },
+                "status": "planning_user_refinement",
+            }
         validation = CodeValidation.model_validate(state["code_validation"])
         run_result = (
             RunResult.model_validate(state["run_result"])
@@ -49,8 +60,8 @@ def build_fix_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool)
         )
         response, records = complete_and_record(
             model,
-            stage="fix_plan",
-            system_prompt=FIX_PLAN_SYSTEM,
+            stage="user_refinement_plan" if state.get("user_instruction") else "fix_plan",
+            system_prompt=REFINEMENT_PLAN_SYSTEM if state.get("user_instruction") else FIX_PLAN_SYSTEM,
             user_prompt=prompt,
             current=state.get("context_records"),
         )

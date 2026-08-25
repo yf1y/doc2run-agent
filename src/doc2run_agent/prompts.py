@@ -120,6 +120,35 @@ and unrelated working behavior. Return exactly one JSON object:
 Do not return code or another patch."""
 
 
+REFINEMENT_PLAN_SYSTEM = """Plan a focused change requested by the user for an already working script.
+The confirmed TaskSpec is still the boundary: preserve its goal, inputs, outputs, dependencies, and
+side effects. If the request conflicts with that specification, describe the conflict instead of
+silently changing the contract. Return the same JSON shape as a repair plan: problem, location,
+change, keep_unchanged, and search_queries. Do not write code yet."""
+
+
+MEMORY_EXTRACT_SYSTEM = """Extract reusable scenario data from a user-approved result.
+This is not API documentation and not a code summary. Return exactly one JSON object:
+{
+  "scenario_kind": "the exact kind required by the supplied domain schema",
+  "scenario_name": "a short specific name",
+  "summary": "what real scenario this data represents",
+  "data": {"only fields allowed by the domain schema": "JSON values"}
+}
+Store only facts and data that describe this scenario. Never store source code, imports, function or
+method names, API signatures, credentials, repair history, errors, or claims generalized from one
+example. If the approved artifacts do not support a field, omit it unless the schema requires it.
+Do not include Markdown."""
+
+
+MEMORY_REVIEW_SYSTEM = """Independently review a proposed scenario-memory entry.
+Check it against the domain schema and the final approved TaskSpec, plan, code, and output. Reject API
+knowledge, code details, repair history, unsupported facts, and general rules inferred from a single
+case. Do not correct or rewrite the candidate. Return exactly one JSON object:
+{"ok": true, "problems": [], "summary": "short verdict"}
+Do not include Markdown."""
+
+
 # Compatibility names for integrations that imported the old prompt constants.
 FIX_RETRIEVAL_SYSTEM = FIX_PLAN_SYSTEM
 FIX_SYSTEM = PATCH_SYSTEM
@@ -147,12 +176,26 @@ def retrieval_plan_request(task_spec: dict[str, Any], decisions: list[str] | Non
     return "Confirmed TaskSpec:\n" + _json(task_spec) + "\n\nUser decisions:\n" + _json(decisions or [])
 
 
-def implementation_plan_request(task_spec: dict[str, Any], context: list[dict[str, Any]]) -> str:
-    return "Confirmed TaskSpec:\n" + _json(task_spec) + "\n\nSelected documentation:\n" + format_context(context)
+def implementation_plan_request(
+    task_spec: dict[str, Any],
+    context: list[dict[str, Any]],
+    scenario_context: list[dict[str, Any]] | None = None,
+) -> str:
+    return (
+        "Confirmed TaskSpec:\n"
+        + _json(task_spec)
+        + "\n\nSelected API/project documentation:\n"
+        + format_context(context)
+        + "\n\nApproved examples from this exact domain (scenario data only):\n"
+        + format_context(scenario_context or [])
+    )
 
 
 def plan_review_request(
-    task_spec: dict[str, Any], plan: dict[str, Any], context: list[dict[str, Any]]
+    task_spec: dict[str, Any],
+    plan: dict[str, Any],
+    context: list[dict[str, Any]],
+    scenario_context: list[dict[str, Any]] | None = None,
 ) -> str:
     return (
         "Confirmed TaskSpec:\n"
@@ -161,6 +204,8 @@ def plan_review_request(
         + _json(plan)
         + "\n\nDocumentation used by the plan:\n"
         + format_context(context)
+        + "\n\nApproved same-domain scenario examples:\n"
+        + format_context(scenario_context or [])
     )
 
 
@@ -169,6 +214,7 @@ def plan_revision_request(
     plan: dict[str, Any],
     review: dict[str, Any],
     additional_context: list[dict[str, Any]],
+    scenario_context: list[dict[str, Any]] | None = None,
 ) -> str:
     return (
         "Confirmed TaskSpec:\n"
@@ -179,6 +225,8 @@ def plan_revision_request(
         + _json(review)
         + "\n\nAdditional documentation:\n"
         + format_context(additional_context)
+        + "\n\nApproved same-domain scenario examples:\n"
+        + format_context(scenario_context or [])
     )
 
 
@@ -187,6 +235,7 @@ def code_request(
     context: list[dict[str, Any]],
     implementation_plan: dict[str, Any] | None = None,
     plan_review: dict[str, Any] | None = None,
+    scenario_context: list[dict[str, Any]] | None = None,
 ) -> str:
     return (
         "Confirmed TaskSpec:\n"
@@ -197,6 +246,50 @@ def code_request(
         + _json(plan_review or {})
         + "\n\nSelected documentation:\n"
         + format_context(context)
+        + "\n\nApproved same-domain scenario examples:\n"
+        + format_context(scenario_context or [])
+    )
+
+
+def memory_extract_request(
+    *,
+    domain: str,
+    schema: dict[str, Any],
+    task_spec: dict[str, Any],
+    implementation_plan: dict[str, Any],
+    code: str,
+    run_result: dict[str, Any],
+    approval_note: str,
+) -> str:
+    return (
+        "Active domain:\n" + domain
+        + "\n\nHard domain memory schema:\n" + _json(schema)
+        + "\n\nFinal approved TaskSpec:\n" + _json(task_spec)
+        + "\n\nFinal implementation plan:\n" + _json(implementation_plan)
+        + "\n\nFinal approved code:\n" + code
+        + "\n\nFinal successful output:\n" + _json(trim_run_result(run_result))
+        + "\n\nUser approval note:\n" + (approval_note or "(none)")
+    )
+
+
+def memory_review_request(
+    *,
+    schema: dict[str, Any],
+    candidate: dict[str, Any],
+    validation_errors: list[str],
+    task_spec: dict[str, Any],
+    implementation_plan: dict[str, Any],
+    code: str,
+    run_result: dict[str, Any],
+) -> str:
+    return (
+        "Hard domain memory schema:\n" + _json(schema)
+        + "\n\nCandidate (review only; do not rewrite):\n" + _json(candidate)
+        + "\n\nDeterministic validation errors:\n" + _json(validation_errors)
+        + "\n\nFinal approved TaskSpec:\n" + _json(task_spec)
+        + "\n\nFinal implementation plan:\n" + _json(implementation_plan)
+        + "\n\nFinal approved code:\n" + code
+        + "\n\nFinal successful output:\n" + _json(trim_run_result(run_result))
     )
 
 

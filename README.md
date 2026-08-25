@@ -15,7 +15,7 @@
 ```text
 你的需求 → 关键问题澄清 → 需求确认 → 第一次检索
         → 写实现方案 → 核对方案 → 按缺口再次检索 → 生成代码
-        → 安全检查 → 实际执行 → 局部修复与核对 → 保存全部产物
+        → 安全检查 → 实际执行 → 局部修复与核对 → 用户验收 → 可选场景记忆
 ```
 
 | 常见的一次性代码生成 | Doc2Run Agent |
@@ -48,7 +48,8 @@ Agent> 已完成文档检索、代码生成、验证和执行。产物已保存�
 
 ## 1. 功能概述
 
-Doc2Run Agent 将一次 Python 自动化拆成三个各司其职的阶段：
+Doc2Run Agent 是一条固定的分阶段工作流。代码里的 Agent 名称表示职责边界，
+并不表示多个自由 Agent 互相发消息或自行组织协作：
 
 | 阶段 | 它负责什么 | 解决什么问题 |
 |---|---|---|
@@ -61,13 +62,14 @@ Doc2Run Agent 将一次 Python 自动化拆成三个各司其职的阶段：
 主要能力：
 
 - **需求确认门**：目标、输入输出、约束、验收标准缺一不可。
-- **两轮本地检索**：先查接口和领域材料，再根据实现方案中发现的缺口定向补查。
-- **可选领域材料**：通用流程不内置电力等领域字段；可在知识库子目录中按需放入领域说明、规则和示例。
+- **分开的本地检索**：接口文档和已验收场景走不同入口；实现方案发现接口缺口后可以再次定向补查。
+- **可选领域记忆**：通用 `TaskSpec` 不内置电力等领域字段；每个领域通过外部 schema 约束自己可保存的场景数据。
 - **实现方案检查**：生成代码前保存并核对结构化方案，缺少的事实不会被静默当成已知信息。
 - **受控局部修复**：优先使用精确文本替换；核对通过后才重新执行，后续轮次才允许完整重写兜底。
 - **上下文可追溯**：每次实际发送给模型的 system prompt、user prompt、回复、来源和估算 token 数都会保存。
-- **多模型协作**：三个阶段可以共用一个模型，也可以分别使用不同模型或服务商。
+- **分阶段模型配置**：各阶段可以共用一个模型，也可以分别使用不同模型或服务商。
 - **生成—验证—执行—修复闭环**：检查语法、依赖、危险调用和明显的绝对路径写入，再实际执行代码。
+- **验收后再记忆**：运行成功后仍可继续提出修改；只有 `/approve` 才会用全新上下文提取场景候选，经过格式检查、独立审查和 `/remember` 后才加入当前领域。
 - **断点恢复**：对话、需求版本和运行阶段会持久化；退出后可以使用同一 session 继续。
 - **完整留痕**：保留 `TaskSpec`、检索上下文、生成代码、验证结果、stdout、stderr 和修复记录。
 
@@ -178,6 +180,7 @@ knowledge/
     └── power/
         ├── overview.md
         ├── building_rules.md
+        └── memory_schema.json       # 可选；只约束本领域可保存的场景数据
         └── examples.json
 ```
 
@@ -189,7 +192,7 @@ Doc2Run Agent 会在生成和修复前自动规划查询，只把最相关的文
 doc2run-agent --session demo
 ```
 
-输入一个自动化需求，回答 Agent 的关键问题。系统展示整理后的 `TaskSpec` 后，输入 `/confirm` 才会开始生成和运行代码。
+输入一个自动化需求，回答 Agent 的关键问题。系统展示整理后的 `TaskSpec` 后，输入 `/confirm` 才会开始生成和运行代码。代码成功运行后不会立刻结束：你可以直接描述希望修改的地方，工作流会局部修改、核对并重新运行；满意后再验收。
 
 常用命令：
 
@@ -197,6 +200,9 @@ doc2run-agent --session demo
 /show      查看当前 TaskSpec 草稿
 /history   查看已保存的需求对话
 /confirm   确认需求，开始生成、验证、执行和修复
+/approve [说明]  验收当前代码；若指定了领域，则生成隔离的场景记忆候选
+/remember  审阅候选后，将它加入当前领域
+/reject-memory  拒绝候选并归档
 /reset     归档当前 session，重新开始
 /help      查看命令帮助
 /exit      保存并退出
@@ -214,8 +220,12 @@ doc2run-agent --session demo
 doc2run-agent \
   --session internal-report \
   --config configs/development.yaml \
-  --knowledge-dir knowledge
+  --knowledge-dir knowledge \
+  --domain power \
+  --memory-dir memory
 ```
+
+不传 `--domain` 时，场景记忆的写入和检索都会关闭。传入领域后，必须提供 `knowledge/domains/<domain>/memory_schema.json`；可从 [`examples/domain_knowledge/power/memory_schema.json`](examples/domain_knowledge/power/memory_schema.json) 开始修改。接口文档只从 `knowledge/api/` 检索，已验收的场景只从 `memory/approved/<domain>/` 检索，两者不会混成一个知识库。
 
 更多输入示例见 [`examples/requests.md`](examples/requests.md)。
 
@@ -231,6 +241,7 @@ sessions/<session-id>/
 ├── retrieval/                   # 第一次、补充检索和修复检索结果
 ├── planning/
 │   ├── api_context.md           # 本次任务实际选中的文档
+│   ├── scenario_context.md      # 本领域已验收且被本次选中的场景
 │   ├── implementation_plan.json # 核对后的实现方案
 │   ├── plan_review.json         # 方案核对结果
 │   └── generation_notes.md      # 模型自行设计的部分和仍缺少的信息
@@ -240,6 +251,8 @@ sessions/<session-id>/
 ```
 
 `/reset` 会将旧 session 移入 `sessions/archives/`，而不是直接删除，因此调试和复盘所需的信息都会保留。
+
+场景记忆采用两次确认：`/approve` 只会创建 `memory/candidates/` 下的候选；候选通过固定格式检查和独立模型审查后，仍需用户输入 `/remember` 才会移动到 `memory/approved/`。被拒绝的候选进入 `memory/rejected/`。保存内容只允许是领域 schema 指定的场景数据，不能写入接口、函数签名、源码或修复记录。
 
 > [!WARNING]
 > 当前 Runner 提供 AST 策略检查、精简环境和超时控制，但它**不是操作系统级沙箱**。不要直接执行来自不可信用户的请求，也不要将其原样暴露为公共服务。生产环境应将 `LocalPythonRunner` 替换为受限容器或虚拟机。
@@ -253,6 +266,8 @@ doc2run-agent/
 │   │   ├── requirements_agent.py  # 需求澄清与 TaskSpec 构建
 │   │   ├── generation_agent.py    # 文档检索与代码生成
 │   │   ├── fix_agent.py           # 错误分析与自动修复
+│   │   ├── memory_agent.py        # 验收后的场景提取与独立审查
+│   │   ├── memory_store.py        # 领域格式检查、审批和隔离检索
 │   │   ├── orchestrator.py        # 顶层工作流与阶段控制
 │   │   ├── retriever.py           # 本地知识库检索
 │   │   ├── context.py             # 上下文预算、日志裁剪和调用记录

@@ -48,6 +48,7 @@ class ArtifactManager:
         *,
         initial_context: list[dict[str, Any]],
         additional_context: list[dict[str, Any]],
+        scenario_context: list[dict[str, Any]],
         initial_implementation_plan: dict[str, Any],
         implementation_plan: dict[str, Any],
         initial_plan_review: dict[str, Any],
@@ -59,6 +60,13 @@ class ArtifactManager:
                 session_id,
                 Path("planning") / "api_context.md",
                 "# Selected documentation\n\n" + format_context(combined) + "\n",
+            ),
+            self.store.write_text(
+                session_id,
+                Path("planning") / "scenario_context.md",
+                "# Approved same-domain scenario examples\n\n"
+                + format_context(scenario_context)
+                + "\n",
             ),
             self.store.write_json(
                 session_id,

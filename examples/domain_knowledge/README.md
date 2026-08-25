@@ -1,9 +1,9 @@
-# Optional domain knowledge
+# Optional domain scenario memory
 
 Doc2Run Agent does not define power grids, databases, document layouts, or any
-other domain in its core schema.  When API documentation explains *how to call*
-an SDK but not *what to build*, add ordinary Markdown or JSON files under a
-domain subdirectory in the selected knowledge directory.
+other domain in its core schema. When API documentation explains *how to call*
+an SDK but not *what to build*, a selected domain can accumulate reviewed
+scenario data without changing the general TaskSpec.
 
 For example:
 
@@ -13,25 +13,29 @@ knowledge/
 │   └── private_sdk.md
 └── domains/
     └── your_domain/
-        ├── overview.md
-        ├── building_rules.md
-        ├── review_rules.md
-        └── examples.json
+        └── memory_schema.json
 ```
 
-Useful content includes:
+The schema hard-codes the scenario kind, allowed fields, required fields, JSON
+types, and domain-specific forbidden keys. The power example in this directory
+shows the format. It deliberately contains no SDK calls.
+
+Run the CLI with `--domain your_domain`. After a successful result:
+
+1. Keep giving normal instructions if the code still needs changes.
+2. Enter `/approve` to start isolated scenario extraction and review.
+3. Inspect the candidate, then enter `/remember` or `/reject-memory`.
+
+Only `/remember` moves data to `memory/approved/<domain>/`. Generation searches
+that exact domain only. Useful scenario fields include:
 
 - the objects that normally make up one solution;
 - how those objects relate to each other;
-- the order in which they should be created;
-- general construction rules that apply beyond one example;
-- checks a domain expert would perform before accepting a result;
-- the source of any exact reference data.
+- exact parameters and reference data for the approved case.
 
-Keep API signatures in the API documentation.  Keep domain rules and reference
-data in the domain directory so the implementation plan can distinguish them.
+Keep API signatures under `knowledge/api/`. Scenario memory rejects API/code
+fields, source code, imports, and repair history.
 
 An exact named reference case cannot be reconstructed reliably from API calls
-alone.  Include its data, allow another approved source, or require the user to
-provide it.  General rules are appropriate when the task permits the model to
-design a new valid case instead of reproducing an exact standard case.
+alone. The first version therefore saves only facts supported by the approved
+case; it does not infer a general rule from one example.

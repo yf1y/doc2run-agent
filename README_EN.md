@@ -15,7 +15,7 @@ The result is not merely code that looks plausible. It is an **executed, traceab
 ```text
 Your request → clarify → confirm → retrieve docs → write and review a plan
              → retrieve missing details → generate → validate → execute
-             → apply and review a local repair → persist artifacts
+             → apply and review a local repair → user review → optional scenario memory
 ```
 
 | Typical one-shot generation | Doc2Run Agent |
@@ -48,7 +48,8 @@ agent> Documentation retrieval, generation, validation, and execution completed.
 
 ## 1. Overview
 
-Doc2Run Agent separates an automation task into three focused stages:
+Doc2Run Agent is a fixed, staged workflow. The Agent names in the code describe role boundaries;
+they do not imply autonomous agents exchanging messages or organizing their own collaboration:
 
 | Stage | Responsibility | Why it matters |
 |---|---|---|
@@ -61,12 +62,13 @@ Execution is controlled by deterministic Python code, not by another LLM agent. 
 Key capabilities:
 
 - **Requirements confirmation gate** for goals, I/O, constraints, and acceptance criteria.
-- **Two-pass local retrieval**: first for APIs and domain material, then for gaps found while reviewing the plan.
-- **Optional domain material** in ordinary knowledge subdirectories; the core schema contains no power-grid or other domain-specific fields.
+- **Separated local retrieval** for API documentation and approved scenarios, plus a targeted second API search when plan review finds a gap.
+- **Optional domain memory** outside the general `TaskSpec`; each domain provides its own hard schema for reusable scenario data.
 - **Plan before code** with JSON artifacts that expose missing information before generation.
 - **Controlled local repair** with exact replacements, a review step, and full rewrite only as a later fallback.
 - **Traceable contexts** containing the exact prompts, responses, sources, and estimated input tokens for each model call.
 - **Independent model selection** for requirements, generation, and repair—or one shared model.
+- **Review before memory**: keep refining a successful run, then use `/approve` to extract a scenario candidate in a fresh context; deterministic checks, an independent review, and `/remember` are all required before reuse.
 - **Generate–validate–execute–repair loop** with syntax, import, destructive-call, and absolute-write checks.
 - **Resumable sessions** that preserve conversation and workflow state across restarts.
 - **Complete artifacts** including specs, retrieved context, generated code, validation, stdout, stderr, and repair history.
@@ -177,7 +179,8 @@ knowledge/
     └── power/
         ├── overview.md
         ├── building_rules.md
-        └── examples.json
+        ├── examples.json
+        └── memory_schema.json       # optional hard schema for reusable scenario data
 ```
 
 The optional domain directory can provide general concepts, construction rules, and examples without changing the core workflow schema. Before generation, Doc2Run Agent retrieves relevant material, reviews an implementation plan, and searches again when the review finds a gap. Keep the bundled `demo_record_sdk.md` for a credential-free first run.
@@ -188,12 +191,15 @@ The optional domain directory can provide general concepts, construction rules, 
 doc2run-agent --session demo
 ```
 
-Describe one automation and answer the focused follow-up questions. Once the resulting `TaskSpec` is ready, enter `/confirm` to begin generation and execution.
+Describe one automation and answer the focused follow-up questions. Once the resulting `TaskSpec` is ready, enter `/confirm` to begin generation and execution. After a successful run, enter a normal instruction to refine the code and run it again, or approve it when satisfied.
 
 ```text
 /show      show the current TaskSpec draft
 /history   show the saved requirements conversation
 /confirm   generate, validate, run, and repair
+/approve [note]  approve the code and, with a domain, create an isolated memory candidate
+/remember  add the reviewed candidate to the active domain
+/reject-memory  reject and archive the candidate
 /reset     archive the current session and start again
 /help      show command help
 /exit      save and exit
@@ -211,8 +217,12 @@ Select another configuration or knowledge directory when needed:
 doc2run-agent \
   --session internal-report \
   --config configs/development.yaml \
-  --knowledge-dir knowledge
+  --knowledge-dir knowledge \
+  --domain power \
+  --memory-dir memory
 ```
+
+Without `--domain`, scenario-memory reads and writes are disabled. A selected domain requires `knowledge/domains/<domain>/memory_schema.json`; the power example under `examples/domain_knowledge/` is a starting point. API documentation is retrieved only from `knowledge/api/`, while accepted scenarios come only from `memory/approved/<domain>/`.
 
 See [`examples/requests.md`](examples/requests.md) for another example.
 
@@ -234,6 +244,8 @@ sessions/<session-id>/
 
 `/reset` archives the previous session under `sessions/archives/` instead of deleting it.
 
+Scenario memory has two user gates. `/approve` creates a candidate under `memory/candidates/`; even after deterministic schema validation and an independent model review, `/remember` is required to move it into `memory/approved/`. Rejected candidates are archived under `memory/rejected/`. The hard domain schema permits scenario data only—never API signatures, source code, or repair history.
+
 > [!WARNING]
 > The current runner provides AST policy checks, a reduced environment, and timeouts, but it is **not an OS sandbox**. Do not execute untrusted requests or expose it directly as a public service. Replace `LocalPythonRunner` with a locked-down container or VM for that use case.
 
@@ -246,6 +258,8 @@ doc2run-agent/
 │   │   ├── requirements_agent.py  # requirement clarification and TaskSpec
 │   │   ├── generation_agent.py    # documentation retrieval and generation
 │   │   ├── fix_agent.py           # failure diagnosis and repair
+│   │   ├── memory_agent.py        # isolated extraction and independent review
+│   │   ├── memory_store.py        # schemas, approval, and domain-isolated retrieval
 │   │   ├── orchestrator.py        # top-level workflow and state gates
 │   │   ├── retriever.py           # local knowledge retrieval
 │   │   ├── context.py             # context budgets, log trimming, and call records

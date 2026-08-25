@@ -52,7 +52,7 @@ def test_interactive_cli_persists_and_executes_a_session(tmp_path):
     )
 
     record = FileSessionStore(tmp_path / "sessions").load_or_create("cli-demo")
-    assert record.status == "succeeded"
+    assert record.status == "awaiting_review"
     assert record.run_result is not None and record.run_result.ok
     assert any("Enter /confirm" in value for value in outputs)
     assert any('"ok": true' in value for value in outputs)

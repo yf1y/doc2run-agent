@@ -145,6 +145,19 @@ class PatchReview(StrictModel):
     problems: list[str] = Field(default_factory=list)
 
 
+class ScenarioCandidate(StrictModel):
+    scenario_kind: str
+    scenario_name: str
+    summary: str
+    data: dict[str, Any]
+
+
+class MemoryReview(StrictModel):
+    ok: bool
+    problems: list[str] = Field(default_factory=list)
+    summary: str = ""
+
+
 class ModelContextRecord(StrictModel):
     stage: str
     system_prompt: str
@@ -204,6 +217,9 @@ class SessionRecord(StrictModel):
         "generating_code",
         "executing",
         "repairing",
+        "awaiting_review",
+        "memory_candidate_ready",
+        "approved",
         "succeeded",
         "failed",
     ] = "collecting_goal"
@@ -215,6 +231,7 @@ class SessionRecord(StrictModel):
     pending_questions: list[str] = Field(default_factory=list)
     retrieval_queries: list[str] = Field(default_factory=list)
     retrieved_context: list[dict[str, Any]] = Field(default_factory=list)
+    scenario_context: list[dict[str, Any]] = Field(default_factory=list)
     implementation_plan: dict[str, Any] | None = None
     plan_review: dict[str, Any] | None = None
     generated_code: str = ""
@@ -222,13 +239,19 @@ class SessionRecord(StrictModel):
     run_result: RunResult | None = None
     run_history: list[dict[str, Any]] = Field(default_factory=list)
     fix_attempts: int = 0
+    active_domain: str = ""
+    approval_note: str = ""
+    memory_candidate_id: str = ""
+    memory_candidate: dict[str, Any] | None = None
+    memory_validation_errors: list[str] = Field(default_factory=list)
+    memory_review: dict[str, Any] | None = None
     status: str = "collecting_requirements"
     created_at: str = Field(default_factory=utc_now)
     updated_at: str = Field(default_factory=utc_now)
 
 
 class OrchestratorState(TypedDict, total=False):
-    event: Literal["message", "confirm"]
+    event: Literal["message", "confirm", "refine"]
     user_input: str
     session: dict[str, Any]
     task_spec: dict[str, Any]
@@ -236,6 +259,7 @@ class OrchestratorState(TypedDict, total=False):
     retrieval_queries: list[str]
     additional_retrieval_queries: list[str]
     retrieved_context: list[dict[str, Any]]
+    scenario_context: list[dict[str, Any]]
     additional_context: list[dict[str, Any]]
     fix_context: list[dict[str, Any]]
     implementation_plan: dict[str, Any]
@@ -253,7 +277,9 @@ class OrchestratorState(TypedDict, total=False):
     run_result: dict[str, Any]
     run_history: list[dict[str, Any]]
     fix_attempts: int
+    fix_attempt_limit: int
     error_info: dict[str, Any]
+    user_instruction: str
     status: str
     assistant_message: str
     artifact_paths: list[str]
