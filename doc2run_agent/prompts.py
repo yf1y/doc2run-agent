@@ -36,7 +36,8 @@ questions at a time. Do not generate code. Do not include Markdown outside the J
 
 RETRIEVAL_PLAN_SYSTEM = """Plan the first documentation search for Doc2Run Agent.
 Return exactly one JSON object with a queries array containing one to four focused searches.
-Cover the APIs, data formats, examples, and domain material needed by the confirmed task.
+The same queries will be run separately against API documentation and the selected domain's reference
+material. Cover exact calls, data formats, and business facts needed by the confirmed task.
 Prefer exact class, function, and parameter names when known. Do not generate code or Markdown."""
 
 
@@ -178,14 +179,17 @@ def retrieval_plan_request(task_spec: dict[str, Any], decisions: list[str] | Non
 
 def implementation_plan_request(
     task_spec: dict[str, Any],
-    context: list[dict[str, Any]],
+    api_context: list[dict[str, Any]],
     scenario_context: list[dict[str, Any]] | None = None,
+    domain_context: list[dict[str, Any]] | None = None,
 ) -> str:
     return (
         "Confirmed TaskSpec:\n"
         + _json(task_spec)
-        + "\n\nSelected API/project documentation:\n"
-        + format_context(context)
+        + "\n\nSelected API documentation (how to call the SDK/API):\n"
+        + format_context(api_context)
+        + "\n\nSelected domain documentation (business facts and rules):\n"
+        + format_context(domain_context or [])
         + "\n\nApproved examples from this exact domain (scenario data only):\n"
         + format_context(scenario_context or [])
     )
@@ -194,16 +198,19 @@ def implementation_plan_request(
 def plan_review_request(
     task_spec: dict[str, Any],
     plan: dict[str, Any],
-    context: list[dict[str, Any]],
+    api_context: list[dict[str, Any]],
     scenario_context: list[dict[str, Any]] | None = None,
+    domain_context: list[dict[str, Any]] | None = None,
 ) -> str:
     return (
         "Confirmed TaskSpec:\n"
         + _json(task_spec)
         + "\n\nImplementation plan:\n"
         + _json(plan)
-        + "\n\nDocumentation used by the plan:\n"
-        + format_context(context)
+        + "\n\nAPI documentation used by the plan:\n"
+        + format_context(api_context)
+        + "\n\nDomain documentation used by the plan:\n"
+        + format_context(domain_context or [])
         + "\n\nApproved same-domain scenario examples:\n"
         + format_context(scenario_context or [])
     )
@@ -215,6 +222,8 @@ def plan_revision_request(
     review: dict[str, Any],
     additional_context: list[dict[str, Any]],
     scenario_context: list[dict[str, Any]] | None = None,
+    domain_context: list[dict[str, Any]] | None = None,
+    additional_domain_context: list[dict[str, Any]] | None = None,
 ) -> str:
     return (
         "Confirmed TaskSpec:\n"
@@ -223,8 +232,12 @@ def plan_revision_request(
         + _json(plan)
         + "\n\nPlan review:\n"
         + _json(review)
-        + "\n\nAdditional documentation:\n"
+        + "\n\nAdditional API documentation:\n"
         + format_context(additional_context)
+        + "\n\nDomain documentation:\n"
+        + format_context(domain_context or [])
+        + "\n\nAdditional domain documentation:\n"
+        + format_context(additional_domain_context or [])
         + "\n\nApproved same-domain scenario examples:\n"
         + format_context(scenario_context or [])
     )
@@ -232,10 +245,11 @@ def plan_revision_request(
 
 def code_request(
     task_spec: dict[str, Any],
-    context: list[dict[str, Any]],
+    api_context: list[dict[str, Any]],
     implementation_plan: dict[str, Any] | None = None,
     plan_review: dict[str, Any] | None = None,
     scenario_context: list[dict[str, Any]] | None = None,
+    domain_context: list[dict[str, Any]] | None = None,
 ) -> str:
     return (
         "Confirmed TaskSpec:\n"
@@ -244,8 +258,10 @@ def code_request(
         + _json(implementation_plan or {})
         + "\n\nFinal plan review:\n"
         + _json(plan_review or {})
-        + "\n\nSelected documentation:\n"
-        + format_context(context)
+        + "\n\nSelected API documentation:\n"
+        + format_context(api_context)
+        + "\n\nSelected domain documentation:\n"
+        + format_context(domain_context or [])
         + "\n\nApproved same-domain scenario examples:\n"
         + format_context(scenario_context or [])
     )
@@ -321,6 +337,7 @@ def patch_request(
     context: list[dict[str, Any]],
     code: str,
     attempt: int,
+    domain_context: list[dict[str, Any]] | None = None,
 ) -> str:
     rewrite_instruction = (
         "Local edits have failed before; replacement_code may be used if an exact edit is not safe."
@@ -337,8 +354,10 @@ def patch_request(
         + _json(fix_plan)
         + "\n\nCurrent code:\n"
         + code
-        + "\n\nRelevant documentation:\n"
+        + "\n\nRelevant API documentation:\n"
         + format_context(context)
+        + "\n\nRelevant domain documentation:\n"
+        + format_context(domain_context or [])
     )
 
 
@@ -350,6 +369,7 @@ def patch_review_request(
     after: str,
     patch_error: str,
     context: list[dict[str, Any]],
+    domain_context: list[dict[str, Any]] | None = None,
 ) -> str:
     return (
         "Confirmed TaskSpec:\n"
@@ -364,8 +384,10 @@ def patch_review_request(
         + before
         + "\n\nCode after repair:\n"
         + after
-        + "\n\nRelevant documentation:\n"
+        + "\n\nRelevant API documentation:\n"
         + format_context(context)
+        + "\n\nRelevant domain documentation:\n"
+        + format_context(domain_context or [])
     )
 
 

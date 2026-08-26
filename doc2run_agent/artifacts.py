@@ -48,6 +48,8 @@ class ArtifactManager:
         *,
         initial_context: list[dict[str, Any]],
         additional_context: list[dict[str, Any]],
+        domain_context: list[dict[str, Any]],
+        additional_domain_context: list[dict[str, Any]],
         scenario_context: list[dict[str, Any]],
         initial_implementation_plan: dict[str, Any],
         implementation_plan: dict[str, Any],
@@ -55,11 +57,19 @@ class ArtifactManager:
         plan_review: dict[str, Any],
     ) -> list[Path]:
         combined = merge_context(initial_context, additional_context)
+        combined_domain = merge_context(domain_context, additional_domain_context)
         return [
             self.store.write_text(
                 session_id,
                 Path("planning") / "api_context.md",
-                "# Selected documentation\n\n" + format_context(combined) + "\n",
+                "# Selected API documentation\n\n" + format_context(combined) + "\n",
+            ),
+            self.store.write_text(
+                session_id,
+                Path("planning") / "domain_context.md",
+                "# Selected domain documentation\n\n"
+                + format_context(combined_domain)
+                + "\n",
             ),
             self.store.write_text(
                 session_id,

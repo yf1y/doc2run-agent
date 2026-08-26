@@ -29,7 +29,11 @@ from .schemas import (
 from .validation import validate_code
 
 
-def build_fix_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool):
+def build_fix_agent_graph(
+    model: TextModel,
+    knowledge_tool: KnowledgeSearchTool,
+    domain_knowledge_tool: KnowledgeSearchTool | None = None,
+):
     def classify(state: OrchestratorState) -> dict[str, object]:
         if state.get("user_instruction"):
             return {
@@ -75,22 +79,35 @@ def build_fix_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool)
 
     def retrieve(state: OrchestratorState) -> dict[str, object]:
         queries = state.get("retrieval_queries", [])
-        return {"fix_context": knowledge_tool.search_many(queries) if queries else []}
+        return {
+            "fix_context": knowledge_tool.search_many(queries) if queries else [],
+            "fix_domain_context": (
+                domain_knowledge_tool.search_many(queries)
+                if queries and domain_knowledge_tool is not None
+                else []
+            ),
+        }
 
     def propose_patch(state: OrchestratorState) -> dict[str, object]:
         attempt = state.get("fix_attempts", 0) + 1
-        relevant_context = merge_context(
+        api_context = merge_context(
             state.get("retrieved_context", []),
             state.get("additional_context", []),
             state.get("fix_context", []),
+        )
+        domain_context = merge_context(
+            state.get("domain_context", []),
+            state.get("additional_domain_context", []),
+            state.get("fix_domain_context", []),
         )
         prompt = patch_request(
             state["task_spec"],
             state.get("implementation_plan", {}),
             state["fix_plan"],
-            relevant_context,
+            api_context,
             state["code"],
             attempt,
+            domain_context=domain_context,
         )
         response, records = complete_and_record(
             model,
@@ -98,7 +115,7 @@ def build_fix_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool)
             system_prompt=PATCH_SYSTEM,
             user_prompt=prompt,
             current=state.get("context_records"),
-            sources=context_sources(relevant_context, prompt),
+            sources=context_sources(merge_context(api_context, domain_context), prompt),
         )
         patch = parse_model(response, CodePatch)
         return {
@@ -116,10 +133,15 @@ def build_fix_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool)
         return {"code": code, "patch_error": error, "status": "repaired" if not error else "patch_failed"}
 
     def review_patch(state: OrchestratorState) -> dict[str, object]:
-        relevant_context = merge_context(
+        api_context = merge_context(
             state.get("retrieved_context", []),
             state.get("additional_context", []),
             state.get("fix_context", []),
+        )
+        domain_context = merge_context(
+            state.get("domain_context", []),
+            state.get("additional_domain_context", []),
+            state.get("fix_domain_context", []),
         )
         prompt = patch_review_request(
             state["task_spec"],
@@ -128,7 +150,8 @@ def build_fix_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool)
             state["previous_code"],
             state["code"],
             state.get("patch_error", ""),
-            relevant_context,
+            api_context,
+            domain_context=domain_context,
         )
         response, records = complete_and_record(
             model,
@@ -136,7 +159,7 @@ def build_fix_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool)
             system_prompt=PATCH_REVIEW_SYSTEM,
             user_prompt=prompt,
             current=state.get("context_records"),
-            sources=context_sources(relevant_context, prompt),
+            sources=context_sources(merge_context(api_context, domain_context), prompt),
         )
         review = parse_model(response, PatchReview)
         return {"patch_review": review.model_dump(mode="json"), "context_records": records}

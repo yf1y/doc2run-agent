@@ -29,6 +29,7 @@ class Doc2RunOrchestrator:
         max_fix_attempts: int = 3,
         scenario_memory: ScenarioMemoryStore | None = None,
         domain: str = "",
+        domain_knowledge_tool: KnowledgeSearchTool | None = None,
     ) -> None:
         if max_fix_attempts < 0:
             raise ValueError("max_fix_attempts cannot be negative")
@@ -48,6 +49,7 @@ class Doc2RunOrchestrator:
             max_fix_attempts=max_fix_attempts,
             scenario_memory=scenario_memory,
             domain=domain,
+            domain_knowledge_tool=domain_knowledge_tool,
         )
 
     def handle_message(self, session_id: str, user_input: str) -> dict[str, Any]:
@@ -188,13 +190,20 @@ def build_orchestrator_graph(
     max_fix_attempts: int,
     scenario_memory: ScenarioMemoryStore | None = None,
     domain: str = "",
+    domain_knowledge_tool: KnowledgeSearchTool | None = None,
 ):
     models = as_agent_models(models)
     requirements_agent = RequirementsAgent(models.requirements)
     generation_graph = build_generation_agent_graph(
-        models.code, knowledge_tool, scenario_memory=scenario_memory, domain=domain
+        models.code,
+        knowledge_tool,
+        scenario_memory=scenario_memory,
+        domain=domain,
+        domain_knowledge_tool=domain_knowledge_tool,
     )
-    fix_graph = build_fix_agent_graph(models.fix, knowledge_tool)
+    fix_graph = build_fix_agent_graph(
+        models.fix, knowledge_tool, domain_knowledge_tool=domain_knowledge_tool
+    )
     artifacts = ArtifactManager(store)
 
     def route_event(
@@ -216,6 +225,7 @@ def build_orchestrator_graph(
             "task_spec": record.confirmed_spec.model_dump(mode="json"),
             "implementation_plan": record.implementation_plan or {},
             "retrieved_context": list(record.retrieved_context),
+            "domain_context": list(record.domain_context),
             "scenario_context": list(record.scenario_context),
             "code": record.generated_code,
             "code_validation": (
@@ -294,6 +304,16 @@ def build_orchestrator_graph(
             context=state["retrieved_context"],
         )
         extra_paths: list[Any] = []
+        if domain:
+            extra_paths.append(
+                artifacts.save_retrieval(
+                    record.session_id,
+                    stage="domain_knowledge",
+                    round_index=1,
+                    queries=state["retrieval_queries"],
+                    context=state.get("domain_context", []),
+                )
+            )
         if state.get("additional_retrieval_queries"):
             extra_paths.append(
                 artifacts.save_retrieval(
@@ -304,10 +324,22 @@ def build_orchestrator_graph(
                     context=state.get("additional_context", []),
                 )
             )
+            if domain:
+                extra_paths.append(
+                    artifacts.save_retrieval(
+                        record.session_id,
+                        stage="domain_knowledge_followup",
+                        round_index=2,
+                        queries=state["additional_retrieval_queries"],
+                        context=state.get("additional_domain_context", []),
+                    )
+                )
         planning_paths = artifacts.save_planning(
             record.session_id,
             initial_context=state["retrieved_context"],
             additional_context=state.get("additional_context", []),
+            domain_context=state.get("domain_context", []),
+            additional_domain_context=state.get("additional_domain_context", []),
             scenario_context=state.get("scenario_context", []),
             initial_implementation_plan=state.get(
                 "initial_implementation_plan", state["implementation_plan"]
@@ -361,13 +393,25 @@ def build_orchestrator_graph(
         record = _sync_record(SessionRecord.model_validate(state["session"]), state)
         record.phase = "repairing"
         attempt = state["fix_attempts"]
-        retrieval_path = artifacts.save_retrieval(
-            record.session_id,
-            stage="fix_agent",
-            round_index=attempt,
-            queries=state["retrieval_queries"],
-            context=state.get("fix_context", []),
-        )
+        retrieval_paths = [
+            artifacts.save_retrieval(
+                record.session_id,
+                stage="fix_agent",
+                round_index=attempt,
+                queries=state["retrieval_queries"],
+                context=state.get("fix_context", []),
+            )
+        ]
+        if record.active_domain:
+            retrieval_paths.append(
+                artifacts.save_retrieval(
+                    record.session_id,
+                    stage="fix_agent_domain_knowledge",
+                    round_index=attempt,
+                    queries=state["retrieval_queries"],
+                    context=state.get("fix_domain_context", []),
+                )
+            )
         generation_paths = artifacts.save_generation(
             record.session_id,
             attempt=attempt,
@@ -389,7 +433,7 @@ def build_orchestrator_graph(
         return {
             "session": record.model_dump(mode="json"),
             "artifact_paths": _append_paths(
-                state, [retrieval_path, *generation_paths, *fix_paths, *context_paths]
+                state, [*retrieval_paths, *generation_paths, *fix_paths, *context_paths]
             ),
             # The first patch has now consumed the user's refinement request.
             # Any later loop must diagnose the new validation/runtime result.
@@ -537,12 +581,20 @@ def _sync_record(record: SessionRecord, state: OrchestratorState) -> SessionReco
         record.confirmed_spec = TaskSpec.model_validate(state["task_spec"])
     record.retrieval_queries = list(state.get("retrieval_queries", []))
     record.retrieved_context = list(state.get("retrieved_context", []))
+    record.domain_context = list(state.get("domain_context", record.domain_context))
     record.scenario_context = list(state.get("scenario_context", record.scenario_context))
     if state.get("additional_context"):
         known = {str(item.get("source", "")) for item in record.retrieved_context}
         record.retrieved_context.extend(
             item
             for item in state["additional_context"]
+            if str(item.get("source", "")) not in known
+        )
+    if state.get("additional_domain_context"):
+        known = {str(item.get("source", "")) for item in record.domain_context}
+        record.domain_context.extend(
+            item
+            for item in state["additional_domain_context"]
             if str(item.get("source", "")) not in known
         )
     if state.get("implementation_plan"):

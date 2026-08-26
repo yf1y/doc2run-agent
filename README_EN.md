@@ -19,7 +19,7 @@ Doc2Run Agent targets Python users who need queries, reports, configuration chec
 ## What it does
 
 - Confirms goals, inputs, outputs, limits, and success criteria before generation.
-- Keeps API documentation separate from approved scenario knowledge.
+- Keeps API documentation, user-supplied domain material, and approved scenarios separate.
 - Reviews an implementation plan before generation and stops if the final review still fails.
 - Validates and executes generated code, preserving stdout, stderr, and every revision.
 - Applies focused edits, reviews them, and reruns the script after failures or user feedback.
@@ -70,13 +70,26 @@ my_project/
 ├── doc2run_agent.yaml          # model and request settings
 ├── .env                        # model secret; never commit it
 └── knowledge/
-    └── api/
-        └── api_reference.md    # replace with your API/SDK documentation
+    ├── api/                    # required: how code calls the API
+    │   ├── setup.md
+    │   ├── api_reference.md
+    │   └── usage_rules.md
+    └── domains/                # optional vertical-domain material
+        └── your_domain/        # rename to the --domain value
+            ├── docs/
+            │   └── domain_knowledge.md
+            └── memory_schema.json
 ```
 
-Set a LiteLLM-compatible model in `doc2run_agent.yaml`, put the referenced secret in `.env`, and replace the placeholder under `knowledge/api/`.
+Set a LiteLLM-compatible model in `doc2run_agent.yaml`, put the referenced secret in `.env`, and replace the Markdown comments with real material. Template comments are ignored; startup fails clearly when no usable API documentation exists.
 
-Useful documentation includes exact imports and signatures, parameter and return schemas, exceptions, authentication and pagination requirements, side effects, and minimal runnable calls. Do not place real credentials or sensitive production data in the knowledge directory.
+Knowledge is kept in three separate places:
+
+- `knowledge/api/` contains setup, exact signatures, schemas, exceptions, and call restrictions: how code calls the API.
+- `knowledge/domains/<domain>/docs/` contains terms, business rules, layouts, mappings, topology, and reference data: what is correct in that domain.
+- `memory/approved/<domain>/` is managed by the program and contains only user-approved, validated, independently reviewed scenarios.
+
+Do not place real credentials or sensitive production data in the knowledge directory.
 
 ## Run
 
@@ -84,10 +97,11 @@ Useful documentation includes exact imports and signatures, parameter and return
 doc2run-agent \
   --session my-project \
   --config my_project/doc2run_agent.yaml \
-  --knowledge-dir my_project/knowledge
+  --knowledge-dir my_project/knowledge \
+  --domain your_domain
 ```
 
-Enter the request directly in the CLI; no `request.txt` is required.
+Omit the last line when domain material and scenario memory are not needed. At startup, the CLI prints the exact API, domain, and memory locations it loaded. Enter the request directly; no `request.txt` is required.
 
 ```text
 /show             show the current requirement
@@ -107,13 +121,14 @@ The detailed Chinese guide is available in [`使用文档.md`](使用文档.md).
 
 ## Optional domain memory
 
-Scenario memory is disabled unless `--domain` is provided. To enable it, create:
+Domain-document retrieval and scenario memory are disabled unless `--domain` is provided. To enable them, fill:
 
 ```text
+my_project/knowledge/domains/<domain>/docs/
 my_project/knowledge/domains/<domain>/memory_schema.json
 ```
 
-The schema defines which domain-specific fields may be stored. API signatures, imports, source code, credentials, and repair history are rejected. Approved memories are isolated under `memory/approved/<domain>/`.
+`docs/` contains authoritative domain material supplied in advance. The schema defines which fields may later be learned from approved results. API signatures, imports, source code, credentials, and repair history are rejected. Domains remain isolated.
 
 ## Artifacts and recovery
 

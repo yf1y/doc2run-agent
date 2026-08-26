@@ -227,6 +227,7 @@ class SessionRecord(StrictModel):
     pending_questions: list[str] = Field(default_factory=list)
     retrieval_queries: list[str] = Field(default_factory=list)
     retrieved_context: list[dict[str, Any]] = Field(default_factory=list)
+    domain_context: list[dict[str, Any]] = Field(default_factory=list)
     scenario_context: list[dict[str, Any]] = Field(default_factory=list)
     implementation_plan: dict[str, Any] | None = None
     plan_review: dict[str, Any] | None = None
@@ -255,9 +256,12 @@ class OrchestratorState(TypedDict, total=False):
     retrieval_queries: list[str]
     additional_retrieval_queries: list[str]
     retrieved_context: list[dict[str, Any]]
+    domain_context: list[dict[str, Any]]
     scenario_context: list[dict[str, Any]]
     additional_context: list[dict[str, Any]]
+    additional_domain_context: list[dict[str, Any]]
     fix_context: list[dict[str, Any]]
+    fix_domain_context: list[dict[str, Any]]
     implementation_plan: dict[str, Any]
     initial_implementation_plan: dict[str, Any]
     plan_review: dict[str, Any]

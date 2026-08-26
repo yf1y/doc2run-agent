@@ -60,6 +60,44 @@ def test_generation_agent_subgraph_retrieves_generates_and_validates(tmp_path):
     assert len(result["context_records"]) == 4
 
 
+def test_generation_keeps_api_and_domain_documents_separate(tmp_path):
+    api_directory = tmp_path / "api"
+    domain_directory = tmp_path / "domain"
+    api_directory.mkdir()
+    domain_directory.mkdir()
+    (api_directory / "reference.md").write_text(
+        "create_node(name: str) creates one node.", encoding="utf-8"
+    )
+    (domain_directory / "layout.md").write_text(
+        "The approved feeder layout has 33 connected nodes.", encoding="utf-8"
+    )
+    model = FakeModel(
+        [
+            json.dumps({"queries": ["create nodes for feeder layout"]}),
+            implementation_plan_response(),
+            plan_review_response(),
+            "print('{}')",
+        ]
+    )
+    graph = build_generation_agent_graph(
+        model,
+        KnowledgeSearchTool(LocalKnowledgeBase.from_directory(api_directory)),
+        domain="power",
+        domain_knowledge_tool=KnowledgeSearchTool(
+            LocalKnowledgeBase.from_directory(domain_directory)
+        ),
+    )
+
+    result = graph.invoke({"task_spec": task_spec()})
+
+    assert "create_node" in result["retrieved_context"][0]["content"]
+    assert "33 connected nodes" in result["domain_context"][0]["content"]
+    plan_prompt = model.calls[1][1]
+    assert "Selected API documentation" in plan_prompt
+    assert "Selected domain documentation" in plan_prompt
+    assert plan_prompt.index("create_node") < plan_prompt.index("33 connected nodes")
+
+
 def test_fix_agent_subgraph_classifies_retrieves_repairs_and_validates(tmp_path):
     model = FakeModel(
         [
@@ -91,6 +129,55 @@ def test_fix_agent_subgraph_classifies_retrieves_repairs_and_validates(tmp_path)
     assert result["fix_attempts"] == 1
     assert result["code_validation"]["ok"] is True
     assert result["code"] == "print('fixed')\n"
+
+
+def test_fix_agent_retrieves_domain_rules_separately(tmp_path):
+    api_directory = tmp_path / "api"
+    domain_directory = tmp_path / "domain"
+    api_directory.mkdir()
+    domain_directory.mkdir()
+    (api_directory / "reference.md").write_text(
+        "serialize_result(value) returns JSON.", encoding="utf-8"
+    )
+    (domain_directory / "rules.md").write_text(
+        "Every feeder output must preserve node connectivity.", encoding="utf-8"
+    )
+    model = FakeModel(
+        [
+            fix_plan_response(),
+            patch_response("raise RuntimeError('broken')", "print('fixed')"),
+            patch_review_response(),
+        ]
+    )
+    graph = build_fix_agent_graph(
+        model,
+        KnowledgeSearchTool(LocalKnowledgeBase.from_directory(api_directory)),
+        domain_knowledge_tool=KnowledgeSearchTool(
+            LocalKnowledgeBase.from_directory(domain_directory)
+        ),
+    )
+    state = {
+        "task_spec": task_spec(),
+        "code": "raise RuntimeError('broken')",
+        "code_validation": {"ok": True, "errors": [], "imports": []},
+        "run_result": {
+            "ok": False,
+            "returncode": 1,
+            "stdout": "",
+            "stderr": "RuntimeError: broken",
+            "timed_out": False,
+            "duration_seconds": 0.1,
+        },
+        "retrieved_context": [],
+        "fix_attempts": 0,
+    }
+
+    result = graph.invoke(state)
+
+    assert "connectivity" in result["fix_domain_context"][0]["content"]
+    patch_prompt = model.calls[1][1]
+    assert "Relevant API documentation" in patch_prompt
+    assert "Relevant domain documentation" in patch_prompt
 
 
 def test_generation_agent_searches_again_when_plan_review_finds_a_gap(tmp_path):

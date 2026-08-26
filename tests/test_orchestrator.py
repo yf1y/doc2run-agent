@@ -77,6 +77,7 @@ def test_orchestrator_waits_for_confirmation_then_runs_code(tmp_path):
     assert (store.session_directory("demo") / "runs" / "initial" / "run.json").exists()
     assert (store.session_directory("demo") / "planning" / "implementation_plan.json").exists()
     assert (store.session_directory("demo") / "planning" / "api_context.md").exists()
+    assert (store.session_directory("demo") / "planning" / "domain_context.md").exists()
     assert (store.session_directory("demo") / "planning" / "generation_notes.md").exists()
     assert (store.session_directory("demo") / "contexts" / "manifest.json").exists()
     context_manifest = json.loads(

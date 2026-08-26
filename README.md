@@ -19,7 +19,7 @@ Doc2Run Agent 适合不熟悉某个内部 SDK、但需要完成查询、筛选�
 ## 核心能力
 
 - 先把目标、输入输出、限制和成功标准问清楚，用户输入 `/confirm` 后才开始生成。
-- API 文档和已验收的场景知识分开保存、分开检索。
+- API 文档、用户提供的领域资料和已验收的历史场景分开保存、分开检索。
 - 生成代码前先写实现方案；方案核对仍未通过时不会继续生成。
 - 代码经过语法和规则检查后实际运行，保存 stdout、stderr 和每轮代码。
 - 运行失败或用户继续提出修改时，优先改动相关代码、核对修改、重新测试。
@@ -76,20 +76,24 @@ my_project/
 ├── doc2run_agent.yaml          # 模型和调用参数
 ├── .env                        # 模型密钥，不提交到 Git
 └── knowledge/
-    └── api/
-        └── api_reference.md    # 替换为自己的 API/SDK 文档
+    ├── api/                    # 所有项目都需要：代码怎样调用接口
+    │   ├── setup.md
+    │   ├── api_reference.md
+    │   └── usage_rules.md
+    └── domains/                # 使用垂直领域时启用
+        └── your_domain/        # 改成 --domain 使用的名称
+            ├── docs/
+            │   └── domain_knowledge.md
+            └── memory_schema.json
 ```
 
-在 `doc2run_agent.yaml` 中填写 LiteLLM 支持的模型名，在 `.env` 中填写对应密钥。然后把 `knowledge/api/` 下的占位文档替换为真实资料。
+在 `doc2run_agent.yaml` 中填写 LiteLLM 支持的模型名，在 `.env` 中填写对应密钥。模板中的 Markdown 只有填写说明；程序会忽略这些注释，用户没有放入真实接口资料时会直接报错。
 
-推荐文档至少包含：
+三类知识不会混在一起：
 
-- 正确的安装和 import 写法；
-- 类、函数、方法的完整签名；
-- 参数类型、返回值结构和异常；
-- 初始化、鉴权、分页、限流等调用要求；
-- 可运行的最小调用片段；
-- 会修改文件或远程数据的副作用。
+- `knowledge/api/`：安装、import、函数签名、参数、返回值和调用限制，回答“代码怎么调用”。
+- `knowledge/domains/<domain>/docs/`：术语、业务规则、布局、映射、拓扑和参数表，回答“这个领域什么结果才对”。
+- `memory/approved/<domain>/`：用户验收、格式检查和独立审查都通过的历史场景，由程序管理，不要手工把接口文档放进去。
 
 不要把真实密钥、生产连接串或敏感业务数据写进知识文档。
 
@@ -99,10 +103,11 @@ my_project/
 doc2run-agent \
   --session my-project \
   --config my_project/doc2run_agent.yaml \
-  --knowledge-dir my_project/knowledge
+  --knowledge-dir my_project/knowledge \
+  --domain your_domain
 ```
 
-启动后直接输入自然语言需求，不需要准备 `request.txt`。常用命令：
+不使用领域资料和场景记忆时删除最后一行即可。程序启动时会打印实际加载的接口目录、领域目录和记忆目录，让用户确认材料没有放错位置。之后直接输入自然语言需求，不需要准备 `request.txt`。常用命令：
 
 ```text
 /show             查看当前需求
@@ -122,13 +127,14 @@ doc2run-agent \
 
 ## 可选的领域记忆
 
-不传 `--domain` 时，场景记忆完全关闭。需要时，由使用者自己增加：
+不传 `--domain` 时，领域资料检索和场景记忆都关闭。需要时，填写模板中的：
 
 ```text
+my_project/knowledge/domains/<domain>/docs/
 my_project/knowledge/domains/<domain>/memory_schema.json
 ```
 
-schema 固定该领域允许保存的字段。接口签名、import、源码、凭证和修复过程不会作为场景知识保存。不同领域的记忆位于 `memory/approved/<domain>/`，不会互相检索。
+`docs/` 保存用户事先提供并可核对的领域事实；schema 固定以后允许从验收结果中保存哪些字段。接口签名、import、源码、凭证和修复过程不会作为场景知识保存。不同领域不会互相检索。
 
 ## 运行产物
 
@@ -138,7 +144,7 @@ sessions/<session-id>/
 ├── decisions.md                # 用户确认和纠正
 ├── task_specs/                  # 已确认的需求版本
 ├── retrieval/                   # 每轮文档检索结果
-├── planning/                    # 实现方案及核对结果
+├── planning/                    # 接口/领域/历史场景上下文及方案核对
 ├── contexts/                    # 实际模型输入输出
 ├── runs/                        # 代码、校验、stdout、stderr 和修改记录
 └── workspace/generated.py       # 当前脚本

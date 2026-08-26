@@ -1,0 +1,10 @@
+{
+  "schema_version": "1",
+  "scenario_kind": "replace_with_scenario_kind",
+  "required_fields": ["replace_with_required_field"],
+  "allowed_fields": ["replace_with_required_field"],
+  "field_types": {
+    "replace_with_required_field": "string"
+  },
+  "forbidden_keys": []
+}

@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--knowledge-dir",
         type=Path,
         default=Path("knowledge"),
-        help="API documentation root (default: ./knowledge)",
+        help="Knowledge root containing api/ and optional domains/<domain>/docs/",
     )
     parser.add_argument("--memory-dir", type=Path, default=Path("memory"))
     parser.add_argument(
@@ -88,10 +88,36 @@ def run_chat(
 ) -> None:
     store = FileSessionStore(sessions_directory)
     api_directory = knowledge_directory / "api"
-    knowledge = LocalKnowledgeBase.from_directory(
-        api_directory if api_directory.is_dir() else knowledge_directory
-    )
+    if not api_directory.is_dir():
+        raise ValueError(
+            f"API documentation directory does not exist: {api_directory}. "
+            "Put API material under <knowledge-dir>/api/."
+        )
+    try:
+        knowledge = LocalKnowledgeBase.from_directory(api_directory, source_prefix="api:")
+    except ValueError as error:
+        if str(error) != "Knowledge base is empty":
+            raise
+        raise ValueError(
+            f"No usable API documentation was found in {api_directory}. "
+            "Replace the template comments with real API/SDK material."
+        ) from None
     scenario_memory = ScenarioMemoryStore(memory_directory, knowledge_directory / "domains")
+    domain_knowledge_tool: KnowledgeSearchTool | None = None
+    domain_directory: Path | None = None
+    if domain:
+        scenario_memory.load_schema(domain)
+        domain_directory = knowledge_directory / "domains" / domain / "docs"
+        if domain_directory.is_dir():
+            try:
+                domain_knowledge = LocalKnowledgeBase.from_directory(
+                    domain_directory, source_prefix=f"domain:{domain}:"
+                )
+            except ValueError as error:
+                if str(error) != "Knowledge base is empty":
+                    raise
+            else:
+                domain_knowledge_tool = KnowledgeSearchTool(domain_knowledge, top_k=top_k)
     orchestrator = Doc2RunOrchestrator(
         models,
         KnowledgeSearchTool(knowledge, top_k=top_k),
@@ -100,8 +126,14 @@ def run_chat(
         max_fix_attempts=max_fix_attempts,
         scenario_memory=scenario_memory,
         domain=domain,
+        domain_knowledge_tool=domain_knowledge_tool,
     )
     record = store.load_or_create(session_id)
+    output_fn(
+        _knowledge_summary(
+            api_directory, domain, domain_directory, domain_knowledge_tool, memory_directory
+        )
+    )
     output_fn(_welcome(record, store))
 
     while True:
@@ -169,6 +201,23 @@ def _welcome(record: SessionRecord, store: FileSessionStore) -> str:
         else ""
     )
     return f"{intro}{recovery}\nArtifacts: {location}\nEnter /help for commands."
+
+
+def _knowledge_summary(
+    api_directory: Path,
+    domain: str,
+    domain_directory: Path | None,
+    domain_tool: KnowledgeSearchTool | None,
+    memory_directory: Path,
+) -> str:
+    lines = [f"API documentation: {api_directory}"]
+    if not domain:
+        lines.append("Domain documentation and approved scenario memory: disabled")
+    else:
+        status = "loaded" if domain_tool is not None else "no filled documents"
+        lines.append(f"Domain documentation ({domain}): {domain_directory} [{status}]")
+        lines.append(f"Approved scenario memory: {memory_directory / 'approved' / domain}")
+    return "\n".join(lines)
 
 
 def _format_spec(record: SessionRecord) -> str:

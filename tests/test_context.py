@@ -3,7 +3,12 @@ import json
 import pytest
 
 from doc2run_agent.artifacts import ArtifactManager
-from doc2run_agent.context import complete_and_record, estimate_tokens, trim_run_result
+from doc2run_agent.context import (
+    complete_and_record,
+    estimate_tokens,
+    merge_context,
+    trim_run_result,
+)
 from doc2run_agent.llm import ModelSettings
 from doc2run_agent.session_store import FileSessionStore
 
@@ -37,6 +42,13 @@ def test_run_output_is_trimmed_before_fix_prompt():
     assert "omitted" in trimmed["stderr"]
     assert len(trimmed["stdout"]) < 2200
     assert len(trimmed["stderr"]) < 6200
+
+
+def test_context_merge_keeps_different_documents_with_the_same_relative_name():
+    api = {"source": "reference.md#1.1", "content": "create_node(name)"}
+    domain = {"source": "reference.md#1.1", "content": "The layout has 33 nodes"}
+
+    assert merge_context([api], [domain]) == [api, domain]
 
 
 def test_context_artifacts_append_without_duplicating_calls(tmp_path):

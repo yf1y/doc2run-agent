@@ -31,6 +31,7 @@ def build_generation_agent_graph(
     knowledge_tool: KnowledgeSearchTool,
     scenario_memory: ScenarioMemoryStore | None = None,
     domain: str = "",
+    domain_knowledge_tool: KnowledgeSearchTool | None = None,
 ):
     def plan_retrieval(state: OrchestratorState) -> dict[str, object]:
         prompt = retrieval_plan_request(state["task_spec"], state.get("decisions", []))
@@ -49,17 +50,29 @@ def build_generation_agent_graph(
         }
 
     def retrieve(state: OrchestratorState) -> dict[str, object]:
-        context = knowledge_tool.search_many(state["retrieval_queries"])
+        api_context = knowledge_tool.search_many(state["retrieval_queries"])
+        domain_context = (
+            domain_knowledge_tool.search_many(state["retrieval_queries"])
+            if domain_knowledge_tool is not None
+            else []
+        )
         scenario_context: list[dict[str, Any]] = []
         if scenario_memory is not None and domain:
             spec = TaskSpec.model_validate(state["task_spec"])
             scenario_query = " ".join([spec.objective, *spec.steps, *spec.acceptance_criteria])
             scenario_context = scenario_memory.search(domain, scenario_query, top_k=2)
-        return {"retrieved_context": context, "scenario_context": scenario_context}
+        return {
+            "retrieved_context": api_context,
+            "domain_context": domain_context,
+            "scenario_context": scenario_context,
+        }
 
     def create_plan(state: OrchestratorState) -> dict[str, object]:
         prompt = implementation_plan_request(
-            state["task_spec"], state["retrieved_context"], state.get("scenario_context", [])
+            state["task_spec"],
+            state["retrieved_context"],
+            state.get("scenario_context", []),
+            domain_context=state.get("domain_context", []),
         )
         response, records = complete_and_record(
             model,
@@ -68,7 +81,11 @@ def build_generation_agent_graph(
             user_prompt=prompt,
             current=state.get("context_records"),
             sources=context_sources(
-                merge_context(state["retrieved_context"], state.get("scenario_context", [])),
+                merge_context(
+                    state["retrieved_context"],
+                    state.get("domain_context", []),
+                    state.get("scenario_context", []),
+                ),
                 prompt,
             ),
         )
@@ -86,6 +103,7 @@ def build_generation_agent_graph(
             state["implementation_plan"],
             state["retrieved_context"],
             state.get("scenario_context", []),
+            domain_context=state.get("domain_context", []),
         )
         response, records = complete_and_record(
             model,
@@ -93,7 +111,14 @@ def build_generation_agent_graph(
             system_prompt=PLAN_REVIEW_SYSTEM,
             user_prompt=prompt,
             current=state.get("context_records"),
-            sources=context_sources(state["retrieved_context"], prompt),
+            sources=context_sources(
+                merge_context(
+                    state["retrieved_context"],
+                    state.get("domain_context", []),
+                    state.get("scenario_context", []),
+                ),
+                prompt,
+            ),
         )
         review = parse_model(response, PlanReview)
         value = review.model_dump(mode="json")
@@ -106,7 +131,14 @@ def build_generation_agent_graph(
 
     def retrieve_missing(state: OrchestratorState) -> dict[str, object]:
         queries = state.get("additional_retrieval_queries", [])
-        return {"additional_context": knowledge_tool.search_many(queries) if queries else []}
+        return {
+            "additional_context": knowledge_tool.search_many(queries) if queries else [],
+            "additional_domain_context": (
+                domain_knowledge_tool.search_many(queries)
+                if queries and domain_knowledge_tool is not None
+                else []
+            ),
+        }
 
     def route_after_review(state: OrchestratorState) -> str:
         review = PlanReview.model_validate(state["plan_review"])
@@ -119,6 +151,8 @@ def build_generation_agent_graph(
             state["plan_review"],
             state.get("additional_context", []),
             state.get("scenario_context", []),
+            domain_context=state.get("domain_context", []),
+            additional_domain_context=state.get("additional_domain_context", []),
         )
         response, records = complete_and_record(
             model,
@@ -126,7 +160,15 @@ def build_generation_agent_graph(
             system_prompt=PLAN_REVISION_SYSTEM,
             user_prompt=prompt,
             current=state.get("context_records"),
-            sources=context_sources(state.get("additional_context", []), prompt),
+            sources=context_sources(
+                merge_context(
+                    state.get("additional_context", []),
+                    state.get("domain_context", []),
+                    state.get("additional_domain_context", []),
+                    state.get("scenario_context", []),
+                ),
+                prompt,
+            ),
         )
         plan = parse_model(response, ImplementationPlan)
         return {"implementation_plan": plan.model_dump(mode="json"), "context_records": records}
@@ -137,6 +179,10 @@ def build_generation_agent_graph(
             state["implementation_plan"],
             merge_context(state["retrieved_context"], state.get("additional_context", [])),
             state.get("scenario_context", []),
+            domain_context=merge_context(
+                state.get("domain_context", []),
+                state.get("additional_domain_context", []),
+            ),
         )
         response, records = complete_and_record(
             model,
@@ -145,7 +191,13 @@ def build_generation_agent_graph(
             user_prompt=prompt,
             current=state.get("context_records"),
             sources=context_sources(
-                merge_context(state["retrieved_context"], state.get("additional_context", [])),
+                merge_context(
+                    state["retrieved_context"],
+                    state.get("additional_context", []),
+                    state.get("domain_context", []),
+                    state.get("additional_domain_context", []),
+                    state.get("scenario_context", []),
+                ),
                 prompt,
             ),
         )
@@ -162,13 +214,20 @@ def build_generation_agent_graph(
         return "generate_code" if review.ok and not review.search_queries else "stop"
 
     def generate(state: OrchestratorState) -> dict[str, object]:
-        context = merge_context(state["retrieved_context"], state.get("additional_context", []))
+        api_context = merge_context(
+            state["retrieved_context"], state.get("additional_context", [])
+        )
+        domain_context = merge_context(
+            state.get("domain_context", []),
+            state.get("additional_domain_context", []),
+        )
         prompt = code_request(
             state["task_spec"],
-            context,
+            api_context,
             state["implementation_plan"],
             state["plan_review"],
             state.get("scenario_context", []),
+            domain_context=domain_context,
         )
         response, records = complete_and_record(
             model,
@@ -177,7 +236,8 @@ def build_generation_agent_graph(
             user_prompt=prompt,
             current=state.get("context_records"),
             sources=context_sources(
-                merge_context(context, state.get("scenario_context", [])), prompt
+                merge_context(api_context, domain_context, state.get("scenario_context", [])),
+                prompt,
             ),
         )
         code = sanitize_code(response)

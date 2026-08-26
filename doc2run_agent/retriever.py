@@ -53,7 +53,9 @@ class LocalKnowledgeBase:
         )
 
     @classmethod
-    def from_directory(cls, directory: str | Path) -> "LocalKnowledgeBase":
+    def from_directory(
+        cls, directory: str | Path, *, source_prefix: str = ""
+    ) -> "LocalKnowledgeBase":
         root = Path(directory)
         if not root.is_dir():
             raise ValueError(f"Knowledge directory does not exist: {root}")
@@ -66,7 +68,7 @@ class LocalKnowledgeBase:
                 for part_index, (part, heading, kind) in enumerate(
                     _chunk_document(text, path.suffix.lower()), start=1
                 ):
-                    source = f"{path.relative_to(root)}#{index}.{part_index}"
+                    source = f"{source_prefix}{path.relative_to(root)}#{index}.{part_index}"
                     chunks.append(
                         KnowledgeChunk(source=source, content=part, heading=heading, kind=kind)
                     )
@@ -174,6 +176,8 @@ class LocalKnowledgeBase:
 
 def _read_entries(path: Path) -> list[str]:
     raw = path.read_text(encoding="utf-8").strip()
+    if path.suffix.lower() == ".md":
+        raw = re.sub(r"<!--[\s\S]*?-->", "", raw).strip()
     if not raw:
         return []
     if path.suffix.lower() == ".jsonl":

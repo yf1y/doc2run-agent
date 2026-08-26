@@ -69,13 +69,15 @@ def context_sources(context: list[dict[str, Any]], prompt: str | None = None) ->
 
 def merge_context(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for group in groups:
         for item in group:
             source = str(item.get("source", ""))
-            if source in seen:
+            fingerprint = " ".join(str(item.get("content", "")).split())
+            key = (source, fingerprint)
+            if key in seen:
                 continue
-            seen.add(source)
+            seen.add(key)
             merged.append(item)
     return merged
 
