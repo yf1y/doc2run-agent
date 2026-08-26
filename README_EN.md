@@ -6,78 +6,27 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-> **Turn “read the docs, write the code, make it run” into one complete loop.**
-
-Put private SDK or API documentation in a project knowledge directory, then describe the automation you need in plain language. Doc2Run Agent clarifies the requirements, retrieves the right documentation, generates Python, validates and runs it, and diagnoses and repairs failures.
-
-The result is not merely code that looks plausible. It is an **executed, traceable, resumable automation** with evidence for every step.
+Turn private API/SDK documentation and a natural-language request into an executed, repairable, and traceable Python script.
 
 ```text
-Your request → clarify → confirm → retrieve docs → write and review a plan
-             → retrieve missing details → generate → validate → execute
-             → apply and review a local repair → user review → optional scenario memory
+request → clarify and confirm → retrieve docs → plan and review
+        → generate → validate → execute → edit and retest
+        → user approval → optional domain-scoped memory
 ```
 
-| Typical one-shot generation | Doc2Run Agent |
-|---|---|
-| Guesses from a short prompt | Confirms goals, I/O, constraints, and acceptance criteria first |
-| May invent private SDK usage | Organizes API material and reviews a sourced implementation plan first |
-| Stops after printing code | Validates, executes, and captures stdout/stderr |
-| Hands failures back to you | Plans a small edit, checks it, and repairs within a hard retry limit |
-| Leaves little evidence | Saves plans, exact model contexts, code, and every run |
+Doc2Run Agent targets Python users who need queries, reports, configuration checks, private-SDK examples, or other low-frequency automations. It is neither a general coding agent nor a secure execution service for untrusted input.
 
-An interaction starts like this:
+## What it does
 
-```text
-you> Read all open records from our internal Record SDK and print them as JSON.
+- Confirms goals, inputs, outputs, limits, and success criteria before generation.
+- Keeps API documentation separate from approved scenario knowledge.
+- Reviews an implementation plan before generation and stops if the final review still fails.
+- Validates and executes generated code, preserving stdout, stderr, and every revision.
+- Applies focused edits, reviews them, and reruns the script after failures or user feedback.
+- Creates memory only after `/approve`, in a fresh context, followed by format checks, independent review, and explicit `/remember` confirmation.
+- Persists sessions, specifications, model contexts, retrieval results, and run artifacts locally.
 
-agent> Where should the output go? May the task modify data? What counts as success?
-
-you> stdout; read-only; valid JSON with id, title, and status on every item.
-
-agent> The TaskSpec is ready. Review it and enter /confirm.
-
-you> /confirm
-
-agent> The code ran successfully. Request another change or enter /approve when satisfied.
-```
-
-[Overview](#1-overview) · [Installation](#2-installation) · [Usage](#3-usage) · [Project structure](#4-project-structure)
-
----
-
-## 1. Overview
-
-Doc2Run Agent uses three generation stages plus an optional post-approval memory stage:
-
-| Stage | Responsibility | Why it matters |
-|---|---|---|
-| **Requirements Agent** | Clarifies the request and builds a typed `TaskSpec` | Prevents coding against vague requirements |
-| **Generation Agent** | Retrieves documentation, writes and reviews an implementation plan, then generates a script | Separates document understanding from coding for smaller models |
-| **Fix Agent** | Plans, retrieves, applies, and reviews a local code edit | Preserves working code instead of rewriting everything by default |
-| **Memory Agent (optional)** | Extracts and reviews a candidate from a user-approved result | Reuses scenario knowledge only after explicit user approval |
-
-Execution is controlled by deterministic Python code, not by another LLM agent. Generation begins only after all required sections are explicit and the user enters `/confirm`.
-
-Key capabilities:
-
-- **Requirements confirmation gate** for goals, I/O, constraints, and acceptance criteria.
-- **Separated local retrieval** for API documentation and approved scenarios, plus a targeted second API search when plan review finds a gap.
-- **Optional domain memory** outside the general `TaskSpec`; each domain provides its own hard schema for reusable scenario data.
-- **Plan before code** with JSON artifacts that expose missing information before generation.
-- **Controlled local repair** with exact replacements, a review step, and full rewrite only as a later fallback.
-- **Traceable contexts** containing the exact prompts, responses, sources, and estimated input tokens for each model call.
-- **Independent model selection** for requirements, generation, and repair—or one shared model.
-- **Review before memory**: keep refining a successful run, then use `/approve` to extract a scenario candidate in a fresh context; deterministic checks, an independent review, and `/remember` are all required before reuse.
-- **Generate–validate–execute–repair loop** with syntax, import, destructive-call, and absolute-write checks.
-- **Resumable sessions** that preserve conversation and workflow state across restarts.
-- **Complete artifacts** including specs, retrieved context, generated code, validation, stdout, stderr, and repair history.
-
-A local `doc2run_demo_sdk` is bundled so the full workflow can be tried without credentials or an external service.
-
-Good fits include queries, reports, configuration checks, private-SDK examples, and low-frequency automations with explicit acceptance criteria. It is not a secure execution service for untrusted input or unattended high-risk writes.
-
-## 2. Installation
+## Install
 
 Python 3.10 or newer is required.
 
@@ -85,199 +34,106 @@ Python 3.10 or newer is required.
 git clone https://github.com/yf1y/doc2run-agent.git
 cd doc2run-agent
 python -m venv .venv
-```
 
-Activate the environment:
-
-```bash
 # macOS / Linux
 source .venv/bin/activate
 
 # Windows PowerShell
 .venv\Scripts\Activate.ps1
-```
 
-Install and prepare local configuration:
-
-```bash
 pip install -e .
-
-# macOS / Linux
-cp config.example.yaml doc2run_agent.yaml
-cp .env.example .env
-
-# Windows PowerShell
-Copy-Item config.example.yaml doc2run_agent.yaml
-Copy-Item .env.example .env
 ```
 
-For development and tests:
+For development:
 
 ```bash
 pip install -e ".[dev]"
 pytest -q
 ```
 
-## 3. Usage
+## Prepare a project directory
 
-### 3.1 Configure a model
-
-Doc2Run Agent uses LiteLLM and works with OpenAI, Anthropic, Gemini, Azure, Ollama, OpenRouter, and other providers.
-
-The simplest configuration shares one model across all three stages. In `doc2run_agent.yaml`:
-
-```yaml
-models:
-  defaults:
-    model: openai/gpt-5
-    api_key_env: OPENAI_API_KEY
-    timeout: 120
-    max_retries: 3
-    max_tokens: 4000
-    context_tokens: 16000
-```
-
-`max_tokens` is passed to LiteLLM as the output limit. `context_tokens - max_tokens` is the estimated input budget. Oversized calls fail explicitly instead of silently truncating the TaskSpec, code, or API signatures. These values can be configured per stage.
-
-Store the credential in `.env`:
-
-```dotenv
-OPENAI_API_KEY=your-key-here
-```
-
-Each stage can also use a different model:
-
-```yaml
-models:
-  defaults:
-    timeout: 120
-    max_retries: 3
-    max_tokens: 4000
-
-  requirements:
-    model: anthropic/claude-sonnet-4-5
-    api_key_env: ANTHROPIC_API_KEY
-
-  code:
-    model: openai/gpt-5
-    api_key_env: OPENAI_API_KEY
-    timeout: 180
-
-  fix:
-    model: ollama/qwen2.5-coder
-    api_base: http://localhost:11434
-```
-
-`doc2run_agent.yaml` and `.env` are gitignored. Never commit real credentials.
-
-### 3.2 Add your documentation
-
-Place SDK/API references under a project-specific `knowledge/api/` directory:
-
-```text
-knowledge/
-├── api/
-│   ├── internal_sdk.md
-│   └── api_reference.json
-└── domains/                     # optional
-    └── power/
-        └── memory_schema.json    # hard schema for reusable scenario data
-```
-
-Documentation should include imports, full signatures, parameters, return shapes, exceptions, side effects, and minimal examples. The bundled [`demo/`](demo/) is runnable as-is and can be copied and replaced for another SDK. A detailed Chinese guide is available in [`使用文档.md`](使用文档.md).
-
-### 3.3 Run the interactive CLI
+[`demo/`](demo/) is an empty template. It contains no business example, sample request, or mock SDK. Copy it and replace its contents:
 
 ```bash
-doc2run-agent --session demo --knowledge-dir demo/knowledge
-```
+# macOS / Linux
+cp -R demo my_project
+cp my_project/.env.example my_project/.env
 
-Describe one automation and answer the focused follow-up questions. Once the resulting `TaskSpec` is ready, enter `/confirm` to begin generation and execution. After a successful run, enter a normal instruction to refine the code and run it again, or approve it when satisfied.
+# Windows PowerShell
+Copy-Item -Recurse demo my_project
+Copy-Item my_project/.env.example my_project/.env
+```
 
 ```text
-/show      show the current TaskSpec draft
-/history   show the saved requirements conversation
-/confirm   generate, validate, run, and repair
-/approve [note]  approve the code and, with a domain, create an isolated memory candidate
-/remember  add the reviewed candidate to the active domain
-/reject-memory  reject and archive the candidate
-/reset     archive the current session and start again
-/help      show command help
-/exit      save and exit
+my_project/
+├── doc2run_agent.yaml          # model and request settings
+├── .env                        # model secret; never commit it
+└── knowledge/
+    └── api/
+        └── api_reference.md    # replace with your API/SDK documentation
 ```
 
-Resume by reusing the same session ID:
+Set a LiteLLM-compatible model in `doc2run_agent.yaml`, put the referenced secret in `.env`, and replace the placeholder under `knowledge/api/`.
 
-```bash
-doc2run-agent --session demo
-```
+Useful documentation includes exact imports and signatures, parameter and return schemas, exceptions, authentication and pagination requirements, side effects, and minimal runnable calls. Do not place real credentials or sensitive production data in the knowledge directory.
 
-Select another configuration or knowledge directory when needed:
+## Run
 
 ```bash
 doc2run-agent \
-  --session internal-report \
-  --config configs/development.yaml \
-  --knowledge-dir knowledge \
-  --domain power \
-  --memory-dir memory
+  --session my-project \
+  --config my_project/doc2run_agent.yaml \
+  --knowledge-dir my_project/knowledge
 ```
 
-Without `--domain`, scenario-memory reads and writes are disabled. A selected domain requires `knowledge/domains/<domain>/memory_schema.json`; the power example under `examples/domain_knowledge/` is a starting point. API documentation is retrieved only from `knowledge/api/`, while accepted scenarios come only from `memory/approved/<domain>/`.
-
-Use [`demo/request.txt`](demo/request.txt) for the complete demo request.
-
-### 3.4 Inspect the result
-
-Every session gets an isolated artifact directory:
+Enter the request directly in the CLI; no `request.txt` is required.
 
 ```text
-sessions/<session-id>/
-├── session.json                 # conversation and workflow state
-├── decisions.md                 # explicit user choices and corrections
-├── task_specs/                  # immutable confirmed spec versions
-├── retrieval/                   # initial, follow-up, and repair searches
-├── planning/                    # selected docs, plan, review, and disclosed model choices
-├── contexts/                    # exact model inputs and outputs
-├── runs/                        # code, run results, edit plans, and edit reviews
-└── workspace/generated.py       # final executed script
+/show             show the current requirement
+/history          show the requirements conversation
+/confirm          confirm and start generation, validation, and execution
+/approve [note]   accept the current successful version
+/remember         save a reviewed scenario candidate
+/reject-memory    reject the candidate
+/reset            archive the session and start again
+/help             show help
+/exit             save and leave
 ```
 
-`/reset` archives the previous session under `sessions/archives/` instead of deleting it.
+A successful run does not force the session to end. Continue describing changes to edit, review, and rerun the current code. `/approve` ends the refinement stage. If domain memory is enabled, candidate extraction uses a separate fresh context.
 
-Scenario memory has two user gates. `/approve` creates a candidate under `memory/candidates/`; even after deterministic schema validation and an independent model review, `/remember` is required to move it into `memory/approved/`. Rejected candidates are archived under `memory/rejected/`. The hard domain schema permits scenario data only—never API signatures, source code, or repair history.
+The detailed Chinese guide is available in [`使用文档.md`](使用文档.md).
 
-> [!WARNING]
-> The current runner provides AST policy checks, a reduced environment, and timeouts, but it is **not an OS sandbox**. Do not execute untrusted requests or expose it directly as a public service. Replace `LocalPythonRunner` with a locked-down container or VM for that use case.
+## Optional domain memory
 
-## 4. Project structure
+Scenario memory is disabled unless `--domain` is provided. To enable it, create:
+
+```text
+my_project/knowledge/domains/<domain>/memory_schema.json
+```
+
+The schema defines which domain-specific fields may be stored. API signatures, imports, source code, credentials, and repair history are rejected. Approved memories are isolated under `memory/approved/<domain>/`.
+
+## Artifacts and recovery
+
+Each session keeps its state and artifacts under `sessions/<session-id>/`, including confirmed specifications, retrieval results, plans, exact model contexts, code revisions, validation output, stdout, and stderr. Reuse the same `--session` value to continue; `/reset` archives the previous state instead of deleting it.
+
+## Security boundary
+
+The local runner performs policy checks, trims the environment, and enforces a timeout, but it is not an operating-system sandbox. Do not expose it as a public executor for untrusted requests. Production use requires a restricted container or VM plus controlled credential, network, filesystem, and subprocess access.
+
+## Repository layout
 
 ```text
 doc2run-agent/
-├── src/
-│   ├── doc2run_agent/
-│   │   ├── requirements_agent.py  # requirement clarification and TaskSpec
-│   │   ├── generation_agent.py    # documentation retrieval and generation
-│   │   ├── fix_agent.py           # failure diagnosis and repair
-│   │   ├── memory_agent.py        # isolated extraction and independent review
-│   │   ├── memory_store.py        # schemas, approval, and domain-isolated retrieval
-│   │   ├── orchestrator.py        # top-level workflow and state gates
-│   │   ├── retriever.py           # local knowledge retrieval
-│   │   ├── context.py             # context budgets, log trimming, and call records
-│   │   ├── code_edits.py          # exact local code replacement
-│   │   ├── validation.py          # deterministic static validation
-│   │   ├── runner.py              # timeout-controlled execution
-│   │   ├── session_store.py       # persistence and recovery
-│   │   ├── artifacts.py           # artifact organization
-│   │   ├── config.py / llm.py     # model configuration and LiteLLM adapter
-│   │   └── cli.py                 # interactive CLI
-│   └── doc2run_demo_sdk/          # offline demo SDK
-├── demo/                          # runnable, replaceable example project
-├── 使用文档.md                    # detailed installation and usage guide
-├── examples/                      # domain schema examples
-├── tests/                         # deterministic test suite
-├── config.example.yaml            # model configuration example
-└── pyproject.toml                 # package, dependencies, and CLI entry point
+├── doc2run_agent/              # project source code
+├── demo/                       # copyable empty project template
+├── tests/                      # automated tests
+├── 使用文档.md                 # detailed guide
+├── README.md
+├── README_EN.md
+└── pyproject.toml
 ```
 
-Built with [LangGraph](https://github.com/langchain-ai/langgraph) and [LiteLLM](https://github.com/BerriAI/litellm). Licensed under the [MIT License](LICENSE).
+Built with [LangGraph](https://github.com/langchain-ai/langgraph) and [LiteLLM](https://github.com/BerriAI/litellm), under the [MIT License](LICENSE).

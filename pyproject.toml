@@ -26,8 +26,8 @@ dev = [
 doc2run-agent = "doc2run_agent.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/doc2run_agent", "src/doc2run_demo_sdk"]
+packages = ["doc2run_agent"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["."]
 testpaths = ["tests"]

@@ -1,0 +1,17 @@
+# 将 model 改为 LiteLLM 支持的模型名。
+# api_key_env 必须与同目录 .env 中的变量名一致。
+models:
+  defaults:
+    model: your-provider/your-model
+    api_key_env: MODEL_API_KEY
+    timeout: 120
+    max_retries: 3
+    max_tokens: 4000
+    context_tokens: 16000
+  requirements:
+    max_tokens: 1500
+  code:
+    timeout: 180
+    max_tokens: 5000
+  fix:
+    max_tokens: 3000
