@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .context import context_manifest, context_markdown
+from .context import context_manifest, context_markdown, merge_context
 from .prompts import format_context
 from .session_store import FileSessionStore
 
@@ -54,7 +54,7 @@ class ArtifactManager:
         initial_plan_review: dict[str, Any],
         plan_review: dict[str, Any],
     ) -> list[Path]:
-        combined = _merge_context(initial_context, additional_context)
+        combined = merge_context(initial_context, additional_context)
         return [
             self.store.write_text(
                 session_id,
@@ -175,19 +175,6 @@ class ArtifactManager:
     @staticmethod
     def _run_directory(attempt: int) -> Path:
         return Path("runs") / ("initial" if attempt == 0 else f"fix_{attempt:03d}")
-
-
-def _merge_context(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    values: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for group in groups:
-        for item in group:
-            source = str(item.get("source", ""))
-            if source in seen:
-                continue
-            seen.add(source)
-            values.append(item)
-    return values
 
 
 def _context_fingerprint(record: dict[str, Any]) -> str:

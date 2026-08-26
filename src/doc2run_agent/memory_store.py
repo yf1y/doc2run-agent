@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 import os
 import re
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .file_utils import atomic_json_write
 from .retriever import KnowledgeChunk, LocalKnowledgeBase
 from .schemas import MemoryReview, ScenarioCandidate
 
@@ -100,7 +100,7 @@ class ScenarioMemoryStore:
             "review": review.model_dump(mode="json"),
         }
         path = directory / "scenario.json"
-        _atomic_json_write(path, payload)
+        atomic_json_write(path, payload)
         return candidate_id, path
 
     def approve(self, domain: str, candidate_id: str) -> Path:
@@ -114,7 +114,7 @@ class ScenarioMemoryStore:
             raise ValueError("This scenario candidate is already approved")
         os.replace(source, target)
         payload["manifest"]["approved_at"] = datetime.now(timezone.utc).isoformat()
-        _atomic_json_write(target / "scenario.json", payload)
+        atomic_json_write(target / "scenario.json", payload)
         return target / "scenario.json"
 
     def reject(self, domain: str, candidate_id: str) -> Path:
@@ -201,19 +201,3 @@ def _matches_json_type(value: Any, expected: str) -> bool:
         "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
         "boolean": lambda item: isinstance(item, bool),
     }.get(expected, lambda _item: False)(value)
-
-
-def _atomic_json_write(path: Path, value: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    os.close(descriptor)
-    temporary = Path(name)
-    try:
-        with temporary.open("w", encoding="utf-8") as file_object:
-            json.dump(value, file_object, ensure_ascii=False, indent=2)
-            file_object.write("\n")
-            file_object.flush()
-            os.fsync(file_object.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)

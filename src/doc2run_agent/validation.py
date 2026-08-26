@@ -23,6 +23,8 @@ DISALLOWED_CALLS = {
     "subprocess.run",
     "Path.unlink",
     "Path.rmdir",
+    "pathlib.Path.unlink",
+    "pathlib.Path.rmdir",
 }
 
 
@@ -41,6 +43,7 @@ def validate_code(code: str, task_spec: TaskSpec) -> CodeValidation:
         )
 
     imports = sorted(_collect_imports(tree))
+    aliases = _collect_aliases(tree)
     allowed = _allowed_import_roots(task_spec)
     for module in imports:
         if module not in allowed:
@@ -48,10 +51,10 @@ def validate_code(code: str, task_spec: TaskSpec) -> CodeValidation:
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Call):
-            call_name = _call_name(node.func)
+            call_name = _resolve_name(_call_name(node.func), aliases)
             if call_name in DISALLOWED_CALLS:
                 errors.append(f"Call '{call_name}' is not allowed")
-            absolute_write = _absolute_write_path(node, call_name)
+            absolute_write = _absolute_write_path(node, call_name, aliases)
             if absolute_write:
                 errors.append(f"Writing to absolute path '{absolute_write}' is not allowed")
 
@@ -66,6 +69,27 @@ def _collect_imports(tree: ast.AST) -> set[str]:
         elif isinstance(node, ast.ImportFrom) and node.module:
             modules.add(node.module.split(".", 1)[0])
     return modules
+
+
+def _collect_aliases(tree: ast.AST) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                aliases[item.asname or item.name.split(".", 1)[0]] = item.name
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            for item in node.names:
+                aliases[item.asname or item.name] = f"{node.module}.{item.name}"
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        value_name = _resolve_name(_call_name(node.value), aliases)
+        if value_name:
+            aliases[target.id] = value_name
+    return aliases
 
 
 def _allowed_import_roots(task_spec: TaskSpec) -> set[str]:
@@ -97,16 +121,29 @@ def _call_name(node: ast.expr) -> str:
     return ""
 
 
-def _absolute_write_path(node: ast.Call, call_name: str) -> str:
+def _resolve_name(value: str, aliases: dict[str, str]) -> str:
+    if not value:
+        return ""
+    root, separator, rest = value.partition(".")
+    resolved = aliases.get(root, root)
+    return f"{resolved}.{rest}" if separator else resolved
+
+
+def _absolute_write_path(
+    node: ast.Call, call_name: str, aliases: dict[str, str]
+) -> str:
     if call_name == "open" and node.args:
         path = _constant_string(node.args[0])
         mode = _open_mode(node)
         if path and _is_absolute(path) and any(flag in mode for flag in "wax+"):
             return path
 
-    if call_name.endswith((".write_text", ".write_bytes")) and isinstance(node.func, ast.Attribute):
-        path = _path_constructor_value(node.func.value)
-        if path and _is_absolute(path):
+    if call_name.endswith((".write_text", ".write_bytes", ".open")) and isinstance(
+        node.func, ast.Attribute
+    ):
+        path = _path_constructor_value(node.func.value, aliases)
+        mode = _path_method_mode(node) if call_name.endswith(".open") else "w"
+        if path and _is_absolute(path) and any(flag in mode for flag in "wax+"):
             return path
     return ""
 
@@ -120,8 +157,20 @@ def _open_mode(node: ast.Call) -> str:
     return "r"
 
 
-def _path_constructor_value(node: ast.expr) -> str:
-    if not isinstance(node, ast.Call) or _call_name(node.func).split(".")[-1] != "Path" or not node.args:
+def _path_method_mode(node: ast.Call) -> str:
+    if node.args:
+        return _constant_string(node.args[0]) or "r"
+    for keyword in node.keywords:
+        if keyword.arg == "mode":
+            return _constant_string(keyword.value) or "r"
+    return "r"
+
+
+def _path_constructor_value(node: ast.expr, aliases: dict[str, str]) -> str:
+    constructor = (
+        _resolve_name(_call_name(node.func), aliases) if isinstance(node, ast.Call) else ""
+    )
+    if not isinstance(node, ast.Call) or constructor.split(".")[-1] != "Path" or not node.args:
         return ""
     return _constant_string(node.args[0])
 

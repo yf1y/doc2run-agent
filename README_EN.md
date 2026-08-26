@@ -8,7 +8,7 @@
 
 > **Turn “read the docs, write the code, make it run” into one complete loop.**
 
-Put your private SDK or API documentation in `knowledge/`, then describe the automation you need in plain language. Doc2Run Agent clarifies the requirements, retrieves the right documentation, generates Python, validates and runs it, and diagnoses and repairs failures.
+Put private SDK or API documentation in a project knowledge directory, then describe the automation you need in plain language. Doc2Run Agent clarifies the requirements, retrieves the right documentation, generates Python, validates and runs it, and diagnoses and repairs failures.
 
 The result is not merely code that looks plausible. It is an **executed, traceable, resumable automation** with evidence for every step.
 
@@ -39,7 +39,7 @@ agent> The TaskSpec is ready. Review it and enter /confirm.
 
 you> /confirm
 
-agent> Documentation retrieval, generation, validation, and execution completed.
+agent> The code ran successfully. Request another change or enter /approve when satisfied.
 ```
 
 [Overview](#1-overview) · [Installation](#2-installation) · [Usage](#3-usage) · [Project structure](#4-project-structure)
@@ -48,13 +48,14 @@ agent> Documentation retrieval, generation, validation, and execution completed.
 
 ## 1. Overview
 
-Doc2Run Agent divides an automation task into three connected stages:
+Doc2Run Agent uses three generation stages plus an optional post-approval memory stage:
 
 | Stage | Responsibility | Why it matters |
 |---|---|---|
 | **Requirements Agent** | Clarifies the request and builds a typed `TaskSpec` | Prevents coding against vague requirements |
 | **Generation Agent** | Retrieves documentation, writes and reviews an implementation plan, then generates a script | Separates document understanding from coding for smaller models |
 | **Fix Agent** | Plans, retrieves, applies, and reviews a local code edit | Preserves working code instead of rewriting everything by default |
+| **Memory Agent (optional)** | Extracts and reviews a candidate from a user-approved result | Reuses scenario knowledge only after explicit user approval |
 
 Execution is controlled by deterministic Python code, not by another LLM agent. Generation begins only after all required sections are explicit and the user enters `/confirm`.
 
@@ -73,6 +74,8 @@ Key capabilities:
 - **Complete artifacts** including specs, retrieved context, generated code, validation, stdout, stderr, and repair history.
 
 A local `doc2run_demo_sdk` is bundled so the full workflow can be tried without credentials or an external service.
+
+Good fits include queries, reports, configuration checks, private-SDK examples, and low-frequency automations with explicit acceptance criteria. It is not a secure execution service for untrusted input or unattended high-risk writes.
 
 ## 2. Installation
 
@@ -129,11 +132,12 @@ models:
     model: openai/gpt-5
     api_key_env: OPENAI_API_KEY
     timeout: 120
-    max_retries: 2
+    max_retries: 3
+    max_tokens: 4000
     context_tokens: 16000
 ```
 
-`context_tokens` is the workflow's estimated input limit for one model call. An oversized call fails explicitly instead of silently truncating the TaskSpec, code, or API signatures. It can also be configured per stage.
+`max_tokens` is passed to LiteLLM as the output limit. `context_tokens - max_tokens` is the estimated input budget. Oversized calls fail explicitly instead of silently truncating the TaskSpec, code, or API signatures. These values can be configured per stage.
 
 Store the credential in `.env`:
 
@@ -147,7 +151,8 @@ Each stage can also use a different model:
 models:
   defaults:
     timeout: 120
-    max_retries: 2
+    max_retries: 3
+    max_tokens: 4000
 
   requirements:
     model: anthropic/claude-sonnet-4-5
@@ -167,7 +172,7 @@ models:
 
 ### 3.2 Add your documentation
 
-Place SDK/API references under `knowledge/`:
+Place SDK/API references under a project-specific `knowledge/api/` directory:
 
 ```text
 knowledge/
@@ -176,18 +181,15 @@ knowledge/
 │   └── api_reference.json
 └── domains/                     # optional
     └── power/
-        ├── overview.md
-        ├── building_rules.md
-        ├── examples.json
-        └── memory_schema.json       # optional hard schema for reusable scenario data
+        └── memory_schema.json    # hard schema for reusable scenario data
 ```
 
-The optional domain directory can provide general concepts, construction rules, and examples without changing the core workflow schema. Before generation, Doc2Run Agent retrieves relevant material, reviews an implementation plan, and searches again when the review finds a gap. Keep the bundled `demo_record_sdk.md` for a credential-free first run.
+Documentation should include imports, full signatures, parameters, return shapes, exceptions, side effects, and minimal examples. The bundled [`demo/`](demo/) is runnable as-is and can be copied and replaced for another SDK. A detailed Chinese guide is available in [`使用文档.md`](使用文档.md).
 
 ### 3.3 Run the interactive CLI
 
 ```bash
-doc2run-agent --session demo
+doc2run-agent --session demo --knowledge-dir demo/knowledge
 ```
 
 Describe one automation and answer the focused follow-up questions. Once the resulting `TaskSpec` is ready, enter `/confirm` to begin generation and execution. After a successful run, enter a normal instruction to refine the code and run it again, or approve it when satisfied.
@@ -223,7 +225,7 @@ doc2run-agent \
 
 Without `--domain`, scenario-memory reads and writes are disabled. A selected domain requires `knowledge/domains/<domain>/memory_schema.json`; the power example under `examples/domain_knowledge/` is a starting point. API documentation is retrieved only from `knowledge/api/`, while accepted scenarios come only from `memory/approved/<domain>/`.
 
-See [`examples/requests.md`](examples/requests.md) for another example.
+Use [`demo/request.txt`](demo/request.txt) for the complete demo request.
 
 ### 3.4 Inspect the result
 
@@ -270,8 +272,9 @@ doc2run-agent/
 │   │   ├── config.py / llm.py     # model configuration and LiteLLM adapter
 │   │   └── cli.py                 # interactive CLI
 │   └── doc2run_demo_sdk/          # offline demo SDK
-├── knowledge/                     # SDK/API documentation
-├── examples/                      # example requests
+├── demo/                          # runnable, replaceable example project
+├── 使用文档.md                    # detailed installation and usage guide
+├── examples/                      # domain schema examples
 ├── tests/                         # deterministic test suite
 ├── config.example.yaml            # model configuration example
 └── pyproject.toml                 # package, dependencies, and CLI entry point

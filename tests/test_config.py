@@ -15,6 +15,7 @@ def test_yaml_and_sibling_dotenv_override_environment_fallbacks(tmp_path, monkey
     api_base: http://yaml-default.local/v1
     timeout: 90
     max_retries: 3
+    max_tokens: 3000
     context_tokens: 12000
   requirements:
     model: anthropic/requirements
@@ -24,6 +25,7 @@ def test_yaml_and_sibling_dotenv_override_environment_fallbacks(tmp_path, monkey
     model: openai/code
     api_key: code-literal-key
     timeout: 180
+    max_tokens: 5000
   fix:
     model: ollama/fix
     api_base: http://localhost:11434
@@ -47,11 +49,13 @@ def test_yaml_and_sibling_dotenv_override_environment_fallbacks(tmp_path, monkey
     assert settings.requirements.api_key == "dotenv-secret"
     assert settings.requirements.timeout_seconds == 90
     assert settings.requirements.context_tokens == 12000
+    assert settings.requirements.max_tokens == 3000
     assert settings.code.model == "openai/code"
     assert settings.code.api_base == "http://yaml-default.local/v1"
     assert settings.code.api_key == "code-literal-key"
     assert settings.code.timeout_seconds == 180
     assert settings.code.context_tokens == 12000
+    assert settings.code.max_tokens == 5000
     assert settings.fix.model == "ollama/fix"
     assert settings.fix.api_base == "http://localhost:11434"
     assert settings.fix.max_retries == 0
@@ -108,4 +112,20 @@ def test_missing_api_key_environment_reference_is_rejected(tmp_path, monkeypatch
     )
 
     with pytest.raises(ValueError, match="TEST_MISSING_SECRET"):
+        load_agent_model_settings(config_path)
+
+
+def test_output_budget_must_leave_room_for_input(tmp_path):
+    config_path = tmp_path / "invalid-budget.yaml"
+    config_path.write_text(
+        """models:
+  defaults:
+    model: openai/test
+    context_tokens: 4000
+    max_tokens: 4000
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="smaller than context_tokens"):
         load_agent_model_settings(config_path)

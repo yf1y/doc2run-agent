@@ -11,6 +11,7 @@ def test_model_settings_load_provider_neutral_environment(monkeypatch):
     monkeypatch.setenv("DOC2RUN_AGENT_API_KEY", "gateway-key")
     monkeypatch.setenv("DOC2RUN_AGENT_MODEL_TIMEOUT", "45")
     monkeypatch.setenv("DOC2RUN_AGENT_MODEL_MAX_RETRIES", "4")
+    monkeypatch.setenv("DOC2RUN_AGENT_MODEL_MAX_TOKENS", "2500")
     monkeypatch.setenv("DOC2RUN_AGENT_TRUST_ENV", "true")
 
     settings = ModelSettings.from_env()
@@ -21,6 +22,7 @@ def test_model_settings_load_provider_neutral_environment(monkeypatch):
         api_key="gateway-key",
         timeout_seconds=45,
         max_retries=4,
+        max_tokens=2500,
         trust_env=True,
     )
 
@@ -95,6 +97,8 @@ def test_agent_models_do_not_require_global_model_when_all_roles_are_set(monkeyp
         ("DOC2RUN_AGENT_MODEL_TIMEOUT", "slow", "must be a number"),
         ("DOC2RUN_AGENT_MODEL_MAX_RETRIES", "-1", "cannot be negative"),
         ("DOC2RUN_AGENT_MODEL_MAX_RETRIES", "many", "must be an integer"),
+        ("DOC2RUN_AGENT_MODEL_MAX_TOKENS", "0", "must be at least 1"),
+        ("DOC2RUN_AGENT_MODEL_MAX_TOKENS", "many", "must be an integer"),
         ("DOC2RUN_AGENT_TRUST_ENV", "sometimes", "must be true or false"),
     ],
 )
@@ -136,6 +140,7 @@ def test_litellm_model_passes_unified_completion_arguments():
             "temperature": 0.0,
             "timeout": 30,
             "num_retries": 1,
+            "max_tokens": 4000,
             "api_base": "http://localhost:11434",
         }
     ]

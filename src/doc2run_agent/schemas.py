@@ -181,10 +181,6 @@ class RunResult(StrictModel):
     timed_out: bool
     duration_seconds: float
 
-    def to_dict(self) -> dict[str, Any]:
-        return self.model_dump(mode="json")
-
-
 class ErrorInfo(StrictModel):
     category: Literal[
         "success",

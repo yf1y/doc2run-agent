@@ -40,7 +40,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="YAML model configuration; defaults to ./doc2run_agent.yaml when present",
     )
     parser.add_argument("--sessions-dir", type=Path, default=Path("sessions"))
-    parser.add_argument("--knowledge-dir", type=Path, default=Path("knowledge"))
+    parser.add_argument(
+        "--knowledge-dir",
+        type=Path,
+        default=Path("knowledge"),
+        help="API documentation root (default: ./knowledge)",
+    )
     parser.add_argument("--memory-dir", type=Path, default=Path("memory"))
     parser.add_argument(
         "--domain", default="", help="Optional domain name; enables isolated scenario memory"
@@ -181,6 +186,9 @@ def _format_result(result: dict[str, object], store: FileSessionStore) -> str:
     if result.get("status") == "awaiting_confirmation":
         record = SessionRecord.model_validate(result["session"])
         parts.extend(["\nTaskSpec:", _format_spec(record), "\nEnter /confirm to generate and run."])
+    if result.get("status") == "plan_rejected":
+        session = SessionRecord.model_validate(result["session"])
+        parts.append(f"\nArtifacts: {store.session_directory(session.session_id)}")
     if result.get("status") in {
         "awaiting_review", "memory_candidate_ready", "approved", "succeeded", "failed"
     }:

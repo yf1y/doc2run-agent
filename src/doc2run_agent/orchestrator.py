@@ -316,16 +316,39 @@ def build_orchestrator_graph(
             initial_plan_review=state.get("initial_plan_review", state["plan_review"]),
             plan_review=state["plan_review"],
         )
-        generation_paths = artifacts.save_generation(
-            record.session_id,
-            attempt=0,
-            code=state["code"],
-            validation=state["code_validation"],
-        )
+        generation_paths: list[Any] = []
+        if state.get("code") and state.get("code_validation"):
+            generation_paths = artifacts.save_generation(
+                record.session_id,
+                attempt=0,
+                code=state["code"],
+                validation=state["code_validation"],
+            )
         context_paths = artifacts.save_context_records(
             record.session_id, state.get("context_records", [])
         )
         store.save(record)
+        if state.get("status") == "plan_rejected":
+            record.phase = "generating_code"
+            record.status = "plan_rejected"
+            store.save(record)
+            problems = state.get("plan_review", {}).get("problems", [])
+            searches = state.get("plan_review", {}).get("search_queries", [])
+            details = problems or [
+                f"More documentation requested: {query}" for query in searches
+            ]
+            return {
+                "session": record.model_dump(mode="json"),
+                "status": "plan_rejected",
+                "assistant_message": (
+                    "The final implementation plan was not ready, so no code was generated. "
+                    f"Review details: {details}. Enter /confirm to retry from the confirmed TaskSpec."
+                ),
+                "artifact_paths": _append_paths(
+                    state,
+                    [retrieval_path, *extra_paths, *planning_paths, *context_paths],
+                ),
+            }
         return {
             "session": record.model_dump(mode="json"),
             "artifact_paths": _append_paths(
@@ -379,6 +402,13 @@ def build_orchestrator_graph(
         if state.get("fix_attempts", 0) >= state.get("fix_attempt_limit", max_fix_attempts):
             return "failed"
         return "fix_agent"
+
+    def route_after_generation_persist(
+        state: OrchestratorState,
+    ) -> Literal["execute", "fix_agent", "failed", "blocked"]:
+        if state.get("status") == "plan_rejected":
+            return "blocked"
+        return route_after_validation(state)
 
     def execute(state: OrchestratorState) -> dict[str, Any]:
         record = SessionRecord.model_validate(state["session"])
@@ -478,8 +508,13 @@ def build_orchestrator_graph(
     builder.add_edge("generation_agent", "persist_code_generation")
     builder.add_conditional_edges(
         "persist_code_generation",
-        route_after_validation,
-        {"execute": "execute", "fix_agent": "fix_agent", "failed": "complete_failure"},
+        route_after_generation_persist,
+        {
+            "execute": "execute",
+            "fix_agent": "fix_agent",
+            "failed": "complete_failure",
+            "blocked": END,
+        },
     )
     builder.add_conditional_edges(
         "execute",

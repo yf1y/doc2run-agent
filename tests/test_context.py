@@ -11,7 +11,7 @@ from conftest import FakeModel
 
 
 class LimitedFakeModel(FakeModel):
-    settings = ModelSettings(model="fake", context_tokens=1000)
+    settings = ModelSettings(model="fake", context_tokens=1000, max_tokens=100)
 
 
 def test_token_estimate_counts_cjk_more_conservatively_than_ascii():
@@ -21,7 +21,7 @@ def test_token_estimate_counts_cjk_more_conservatively_than_ascii():
 def test_model_call_rejects_input_over_configured_budget():
     model = LimitedFakeModel(["unused"])
 
-    with pytest.raises(ValueError, match="context budget"):
+    with pytest.raises(ValueError, match="after reserving 100 output tokens"):
         complete_and_record(
             model,
             stage="test",

@@ -20,10 +20,23 @@ class ModelSettings:
     api_base: str | None = None
     api_key: str | None = None
     timeout_seconds: float = 120.0
-    max_retries: int = 2
+    max_retries: int = 3
+    max_tokens: int = 4_000
     temperature: float = 0.0
     trust_env: bool = False
     context_tokens: int = 16_000
+
+    def __post_init__(self) -> None:
+        if self.timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be positive")
+        if self.max_retries < 0:
+            raise ValueError("max_retries cannot be negative")
+        if self.max_tokens < 1:
+            raise ValueError("max_tokens must be positive")
+        if self.context_tokens < 1_000:
+            raise ValueError("context_tokens must be at least 1000")
+        if self.max_tokens >= self.context_tokens:
+            raise ValueError("max_tokens must be smaller than context_tokens")
 
     @classmethod
     def from_env(cls) -> "ModelSettings":
@@ -132,6 +145,7 @@ class LiteLLMModel:
             "temperature": self.settings.temperature,
             "timeout": self.settings.timeout_seconds,
             "num_retries": self.settings.max_retries,
+            "max_tokens": self.settings.max_tokens,
         }
         if self.settings.api_base:
             arguments["api_base"] = self.settings.api_base
@@ -203,6 +217,9 @@ def _role_settings(role: str, shared: ModelSettings) -> ModelSettings:
             f"{prefix}_MAX_RETRIES",
             default=shared.max_retries,
         ),
+        max_tokens=_positive_int_env(
+            f"{prefix}_MAX_TOKENS", default=shared.max_tokens, minimum=1
+        ),
         temperature=shared.temperature,
         trust_env=shared.trust_env,
         context_tokens=_positive_int_env(
@@ -223,7 +240,10 @@ def _global_settings(*, require_model: bool) -> ModelSettings:
         api_base=os.getenv("DOC2RUN_AGENT_API_BASE") or None,
         api_key=os.getenv("DOC2RUN_AGENT_API_KEY") or None,
         timeout_seconds=_positive_float_env("DOC2RUN_AGENT_MODEL_TIMEOUT", default=120.0),
-        max_retries=_nonnegative_int_env("DOC2RUN_AGENT_MODEL_MAX_RETRIES", default=2),
+        max_retries=_nonnegative_int_env("DOC2RUN_AGENT_MODEL_MAX_RETRIES", default=3),
+        max_tokens=_positive_int_env(
+            "DOC2RUN_AGENT_MODEL_MAX_TOKENS", default=4_000, minimum=1
+        ),
         trust_env=_env_flag("DOC2RUN_AGENT_TRUST_ENV", default=False),
         context_tokens=_positive_int_env("DOC2RUN_AGENT_CONTEXT_TOKENS", default=16_000),
     )
@@ -291,7 +311,7 @@ def _nonnegative_int_env(name: str, *, default: int) -> int:
     return value
 
 
-def _positive_int_env(name: str, *, default: int) -> int:
+def _positive_int_env(name: str, *, default: int, minimum: int = 1000) -> int:
     raw = os.getenv(name)
     if raw is None:
         return default
@@ -299,8 +319,8 @@ def _positive_int_env(name: str, *, default: int) -> int:
         value = int(raw)
     except ValueError:
         raise ValueError(f"{name} must be an integer") from None
-    if value < 1000:
-        raise ValueError(f"{name} must be at least 1000")
+    if value < minimum:
+        raise ValueError(f"{name} must be at least {minimum}")
     return value
 
 

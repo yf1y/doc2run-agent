@@ -3,7 +3,7 @@ from __future__ import annotations
 from langgraph.graph import END, START, StateGraph
 
 from .code_edits import apply_code_patch
-from .context import complete_and_record, context_sources
+from .context import complete_and_record, context_sources, merge_context
 from .errors import classify_failure
 from .knowledge_tools import KnowledgeSearchTool
 from .llm import TextModel
@@ -79,7 +79,7 @@ def build_fix_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool)
 
     def propose_patch(state: OrchestratorState) -> dict[str, object]:
         attempt = state.get("fix_attempts", 0) + 1
-        relevant_context = _merge_context(
+        relevant_context = merge_context(
             state.get("retrieved_context", []),
             state.get("additional_context", []),
             state.get("fix_context", []),
@@ -116,7 +116,7 @@ def build_fix_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool)
         return {"code": code, "patch_error": error, "status": "repaired" if not error else "patch_failed"}
 
     def review_patch(state: OrchestratorState) -> dict[str, object]:
-        relevant_context = _merge_context(
+        relevant_context = merge_context(
             state.get("retrieved_context", []),
             state.get("additional_context", []),
             state.get("fix_context", []),
@@ -169,16 +169,3 @@ def build_fix_agent_graph(model: TextModel, knowledge_tool: KnowledgeSearchTool)
     builder.add_edge("review_code_patch", "validate_repaired_code")
     builder.add_edge("validate_repaired_code", END)
     return builder.compile()
-
-
-def _merge_context(*groups: list[dict[str, object]]) -> list[dict[str, object]]:
-    values: list[dict[str, object]] = []
-    seen: set[str] = set()
-    for group in groups:
-        for item in group:
-            source = str(item.get("source", ""))
-            if source in seen:
-                continue
-            seen.add(source)
-            values.append(item)
-    return values

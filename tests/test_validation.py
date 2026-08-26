@@ -1,3 +1,5 @@
+import pytest
+
 from doc2run_agent.schemas import TaskSpec
 from doc2run_agent.validation import validate_code
 
@@ -43,6 +45,32 @@ def test_validation_rejects_absolute_write_and_process_execution():
 def test_validation_rejects_windows_absolute_write_on_every_platform():
     result = validate_code(
         "from pathlib import Path\nPath('C:/temp/result.txt').write_text('x')\n",
+        spec(),
+    )
+
+    assert result.ok is False
+    assert any("absolute path" in error for error in result.errors)
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "import os as safe\nsafe.remove('output.txt')",
+        "from os import remove as delete\ndelete('output.txt')",
+        "import shutil\ndelete = shutil.rmtree\ndelete('output')",
+        "from pathlib import Path as P\nP('output.txt').unlink()",
+    ],
+)
+def test_validation_rejects_destructive_calls_through_simple_aliases(code):
+    result = validate_code(code, spec())
+
+    assert result.ok is False
+    assert any("not allowed" in error for error in result.errors)
+
+
+def test_validation_rejects_absolute_path_open_through_path_alias():
+    result = validate_code(
+        "from pathlib import Path as P\nP('/tmp/output.txt').open('w').write('x')",
         spec(),
     )
 

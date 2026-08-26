@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "scenario_kind": "record_query",
+  "required_fields": ["filter", "output_fields"],
+  "allowed_fields": ["filter", "output_fields", "ordering", "expected_shape"],
+  "field_types": {
+    "filter": "object",
+    "output_fields": "array",
+    "ordering": "array",
+    "expected_shape": "string"
+  },
+  "forbidden_keys": ["endpoint", "request", "response"]
+}

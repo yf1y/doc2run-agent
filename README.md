@@ -8,7 +8,7 @@
 
 > **把“读文档、写代码、调到能跑”交给一个完整闭环。**
 
-把私有 SDK 或 API 文档放进 `knowledge/`，再用自然语言描述你想要的自动化。Doc2Run Agent 会主动澄清需求、查阅相关文档、生成 Python、执行验证，并在失败时定位问题、自主修复。
+把私有 SDK 或 API 文档放进项目知识目录，再用自然语言描述你想要的自动化。Doc2Run Agent 会主动澄清需求、查阅相关文档、生成 Python、执行验证，并在失败时定位问题、自主修复。
 
 它交付的不只是一段“看起来能跑”的代码，而是一个**真正执行过、过程可追溯、随时能恢复**的结果。
 
@@ -39,22 +39,23 @@ Agent> 需求已整理完成，请检查 TaskSpec。确认后输入 /confirm。
 
 你> /confirm
 
-Agent> 已完成文档检索、代码生成、验证和执行。产物已保存。
+Agent> 代码已成功运行。你可以继续提出修改，满意后输入 /approve。
 ```
 
-[功能概述](#1-功能概述) · [安装方式](#2-安装方式) · [使用说明](#3-使用说明) · [项目结构](#4-项目结构)
+[功能概述](#1-功能概述) · [安装方式](#2-安装方式) · [使用说明](#3-使用说明) · [项目结构](#4-项目结构) · [完整使用文档](使用文档.md)
 
 ---
 
 ## 1. 功能概述
 
-Doc2Run Agent 将一次 Python 自动化拆成三个相互衔接的阶段：
+Doc2Run Agent 将一次 Python 自动化拆成三个生成阶段，以及一个验收后的可选记忆阶段：
 
 | 阶段 | 它负责什么 | 解决什么问题 |
 |---|---|---|
 | **Requirements Agent** | 多轮澄清并生成结构化 `TaskSpec` | 避免需求含糊时直接开写 |
 | **Generation Agent** | 检索文档、写实现方案、核对缺口并生成脚本 | 把“理解文档”和“写代码”拆开，降低较小模型的一步推理难度 |
 | **Fix Agent** | 写修改说明、补充检索、局部修改并核对 | 避免整段重写破坏已经正确的代码 |
+| **Memory Agent（可选）** | 从用户验收结果中提取并审查场景候选 | 只在用户确认后积累同领域可复用知识 |
 
 代码执行由确定性的 Python 工作流控制，而不是交给模型自行决定。只有需求完整且用户输入 `/confirm` 后，系统才会进入生成和执行阶段。
 
@@ -73,6 +74,9 @@ Doc2Run Agent 将一次 Python 自动化拆成三个相互衔接的阶段：
 - **完整留痕**：保留 `TaskSpec`、检索上下文、生成代码、验证结果、stdout、stderr 和修复记录。
 
 项目内置一个完全本地的 `doc2run_demo_sdk`，无需真实账号或网络服务即可体验完整流程。
+
+适合数据查询、报表导出、配置检查、私有 SDK 示例和有明确验收条件的低频自动化。
+它不是面向不可信输入的安全执行服务，也不应直接承担无人确认的高风险写操作。
 
 ## 2. 安装方式
 
@@ -130,11 +134,12 @@ models:
     model: openai/gpt-5
     api_key_env: OPENAI_API_KEY
     timeout: 120
-    max_retries: 2
+    max_retries: 3
+    max_tokens: 4000
     context_tokens: 16000
 ```
 
-`context_tokens` 是工作流对单次模型输入的估算上限；超出时会明确报错，而不是静默截掉 TaskSpec、代码或接口签名。不同阶段也可以分别设置该值。
+`max_tokens` 会传给 LiteLLM 作为输出上限；`context_tokens - max_tokens` 是工作流允许的估算输入预算。超出时会明确报错，而不是静默截掉 TaskSpec、代码或接口签名。不同阶段可以分别设置。
 
 然后在 `.env` 中保存密钥：
 
@@ -148,7 +153,8 @@ OPENAI_API_KEY=your-key-here
 models:
   defaults:
     timeout: 120
-    max_retries: 2
+    max_retries: 3
+    max_tokens: 4000
 
   requirements:
     model: anthropic/claude-sonnet-4-5
@@ -168,7 +174,7 @@ models:
 
 ### 3.2 放入你的文档
 
-将 SDK/API 说明放入 `knowledge/`：
+推荐将 SDK/API 说明放入独立项目目录的 `knowledge/api/`：
 
 ```text
 knowledge/
@@ -177,18 +183,15 @@ knowledge/
 │   └── api_reference.json
 └── domains/                     # 可选
     └── power/
-        ├── overview.md
-        ├── building_rules.md
-        └── memory_schema.json       # 可选；只约束本领域可保存的场景数据
-        └── examples.json
+        └── memory_schema.json    # 只约束本领域可保存的场景数据
 ```
 
-Doc2Run Agent 会在生成和修复前自动规划查询，只把最相关的文档片段交给模型。你可以先保留仓库自带的 `demo_record_sdk.md`，用它完成第一次体验。
+文档应包含 import 写法、完整签名、参数与返回结构、异常、副作用和最小示例。详细要求见 [`使用文档.md`](使用文档.md)。仓库自带的 [`demo/`](demo/) 可以直接运行，也可以整体复制后替换成自己的目录。
 
 ### 3.3 运行交互式 CLI
 
 ```bash
-doc2run-agent --session demo
+doc2run-agent --session demo --knowledge-dir demo/knowledge
 ```
 
 输入一个自动化需求，回答 Agent 的关键问题。系统展示整理后的 `TaskSpec` 后，输入 `/confirm` 才会开始生成和运行代码。代码成功运行后不会立刻结束：你可以直接描述希望修改的地方，工作流会局部修改、核对并重新运行；满意后再验收。
@@ -226,7 +229,7 @@ doc2run-agent \
 
 不传 `--domain` 时，场景记忆的写入和检索都会关闭。传入领域后，必须提供 `knowledge/domains/<domain>/memory_schema.json`；可从 [`examples/domain_knowledge/power/memory_schema.json`](examples/domain_knowledge/power/memory_schema.json) 开始修改。接口文档只从 `knowledge/api/` 检索，已验收的场景只从 `memory/approved/<domain>/` 检索，两者不会混成一个知识库。
 
-更多输入示例见 [`examples/requests.md`](examples/requests.md)。
+完整 Demo 请求见 [`demo/request.txt`](demo/request.txt)。
 
 ### 3.4 查看运行结果
 
@@ -278,8 +281,9 @@ doc2run-agent/
 │   │   ├── config.py / llm.py     # 模型配置与 LiteLLM 适配
 │   │   └── cli.py                 # 交互式命令行入口
 │   └── doc2run_demo_sdk/          # 无需联网的演示 SDK
-├── knowledge/                     # SDK/API 文档知识库
-├── examples/                      # 示例需求与对话
+├── demo/                          # 可直接运行、可整体替换的示例项目
+├── 使用文档.md                    # 从安装、文档准备到实际使用
+├── examples/                      # 领域 schema 示例
 ├── tests/                         # 确定性测试套件
 ├── config.example.yaml            # 模型配置示例
 └── pyproject.toml                 # 依赖、打包和 CLI 定义

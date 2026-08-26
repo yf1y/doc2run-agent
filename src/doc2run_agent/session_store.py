@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 import os
 import re
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .file_utils import atomic_json_write, atomic_text_write
 from .schemas import SessionRecord, TaskSpec, utc_now
 
 
@@ -30,7 +29,7 @@ class FileSessionStore:
     def save(self, record: SessionRecord) -> None:
         self._validate_session_id(record.session_id)
         record.updated_at = utc_now()
-        self._atomic_json_write(
+        atomic_json_write(
             self._session_file(record.session_id),
             record.model_dump(mode="json"),
         )
@@ -50,7 +49,7 @@ class FileSessionStore:
             deep=True,
             update={"status": "confirmed", "version": version},
         )
-        self._atomic_json_write(
+        atomic_json_write(
             task_spec_directory / f"task_spec_v{version}.json",
             snapshot.model_dump(mode="json"),
         )
@@ -77,18 +76,12 @@ class FileSessionStore:
 
     def write_json(self, session_id: str, relative_path: str | Path, value: Any) -> Path:
         path = self.session_directory(session_id) / relative_path
-        self._atomic_json_write(path, value)
+        atomic_json_write(path, value)
         return path
 
     def write_text(self, session_id: str, relative_path: str | Path, value: str) -> Path:
         path = self.session_directory(session_id) / relative_path
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = _temporary_path(path)
-        try:
-            temporary.write_text(value, encoding="utf-8")
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        atomic_text_write(path, value)
         return path
 
     def _session_file(self, session_id: str) -> Path:
@@ -100,23 +93,3 @@ class FileSessionStore:
             raise ValueError(
                 "session_id must contain 1-64 letters, numbers, underscores, or hyphens"
             )
-
-    @staticmethod
-    def _atomic_json_write(path: Path, value: Any) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = _temporary_path(path)
-        try:
-            with temporary.open("w", encoding="utf-8") as file_object:
-                json.dump(value, file_object, ensure_ascii=False, indent=2)
-                file_object.write("\n")
-                file_object.flush()
-                os.fsync(file_object.fileno())
-            os.replace(temporary, path)
-        finally:
-            temporary.unlink(missing_ok=True)
-
-
-def _temporary_path(target: Path) -> Path:
-    descriptor, name = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
-    os.close(descriptor)
-    return Path(name)

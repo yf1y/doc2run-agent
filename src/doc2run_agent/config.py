@@ -24,6 +24,7 @@ class ModelConfig(BaseModel):
     api_key_env: str | None = None
     timeout: float | None = Field(default=None, gt=0)
     max_retries: int | None = Field(default=None, ge=0)
+    max_tokens: int | None = Field(default=None, ge=1)
     context_tokens: int | None = Field(default=None, ge=1000)
 
     @model_validator(mode="after")
@@ -114,9 +115,19 @@ def _resolve_role(role: str, models: ModelsConfig) -> ModelSettings:
         models.defaults.max_retries,
         os.getenv(f"{env_prefix}_MAX_RETRIES"),
         os.getenv("DOC2RUN_AGENT_MODEL_MAX_RETRIES"),
-        default=2,
+        default=3,
         field_name=f"models.{role}.max_retries",
     )
+    max_tokens = _first_integer(
+        role_config.max_tokens,
+        models.defaults.max_tokens,
+        os.getenv(f"{env_prefix}_MAX_TOKENS"),
+        os.getenv("DOC2RUN_AGENT_MODEL_MAX_TOKENS"),
+        default=4_000,
+        field_name=f"models.{role}.max_tokens",
+    )
+    if max_tokens < 1:
+        raise ValueError(f"models.{role}.max_tokens must be positive")
     context_tokens = _first_integer(
         role_config.context_tokens,
         models.defaults.context_tokens,
@@ -127,12 +138,15 @@ def _resolve_role(role: str, models: ModelsConfig) -> ModelSettings:
     )
     if context_tokens < 1000:
         raise ValueError(f"models.{role}.context_tokens must be at least 1000")
+    if max_tokens >= context_tokens:
+        raise ValueError(f"models.{role}.max_tokens must be smaller than context_tokens")
     return ModelSettings(
         model=model,
         api_base=api_base,
         api_key=api_key,
         timeout_seconds=timeout,
         max_retries=max_retries,
+        max_tokens=max_tokens,
         trust_env=_environment_flag("DOC2RUN_AGENT_TRUST_ENV", default=False),
         context_tokens=context_tokens,
     )

@@ -1,0 +1,5 @@
+读取 doc2run_demo_sdk 中所有 open 状态的记录，并将一个 JSON 数组输出到 stdout。
+
+这个任务没有外部输入，只允许读取数据，不允许创建或修改记录。可以使用 Python 标准库和
+doc2run_demo_sdk。执行成功的标准是：进程正常退出；stdout 可以解析为 JSON；数组中的每一项
+都包含字符串字段 id、title 和 status，并且 status 都等于 open。

@@ -195,6 +195,29 @@ def test_orchestrator_stops_at_repair_limit(tmp_path):
     assert store.load_or_create("failed-demo").status == "failed"
 
 
+def test_orchestrator_persists_rejected_final_plan_without_running_code(tmp_path):
+    orchestrator, store = make_orchestrator(
+        tmp_path,
+        [
+            complete_requirements_response(),
+            json.dumps({"queries": ["JSON serialization"]}),
+            implementation_plan_response(),
+            plan_review_response(ok=False, queries=["json.dumps exact signature"]),
+            implementation_plan_response(),
+            plan_review_response(ok=False),
+        ],
+    )
+    orchestrator.handle_message("plan-blocked", "Print a JSON result")
+
+    result = orchestrator.confirm("plan-blocked")
+
+    assert result["status"] == "plan_rejected"
+    assert "code" not in result
+    assert not (store.session_directory("plan-blocked") / "runs" / "initial").exists()
+    assert (store.session_directory("plan-blocked") / "planning" / "plan_review.json").exists()
+    assert store.load_or_create("plan-blocked").phase == "generating_code"
+
+
 def test_orchestrator_retries_an_interrupted_generation_from_confirmed_snapshot(tmp_path):
     orchestrator, store = make_orchestrator(
         tmp_path,
@@ -243,3 +266,35 @@ def test_orchestrator_refines_working_code_then_runs_it_again(tmp_path):
     assert json.loads(result["run_result"]["stdout"]) == {"changed": True}
     assert result["fix_attempts"] == 1
     assert len(result["run_history"]) == 2
+
+
+def test_each_user_refinement_gets_its_own_fix_budget(tmp_path):
+    orchestrator, _ = make_orchestrator(
+        tmp_path,
+        [
+            complete_requirements_response(),
+            json.dumps({"queries": ["JSON serialization"]}),
+            implementation_plan_response(),
+            plan_review_response(),
+            "print('{}')",
+            fix_plan_response(),
+            patch_response("print('{}')", "print('{\"version\": 1}')"),
+            patch_review_response(),
+            fix_plan_response(),
+            patch_response(
+                "print('{\"version\": 1}')", "print('{\"version\": 2}')"
+            ),
+            patch_review_response(),
+        ],
+        max_fix_attempts=1,
+    )
+    orchestrator.handle_message("two-refinements", "Print a JSON result")
+    orchestrator.confirm("two-refinements")
+
+    first = orchestrator.handle_message("two-refinements", "Set version to 1")
+    second = orchestrator.handle_message("two-refinements", "Set version to 2")
+
+    assert first["status"] == "awaiting_review"
+    assert second["status"] == "awaiting_review"
+    assert json.loads(second["run_result"]["stdout"]) == {"version": 2}
+    assert second["fix_attempts"] == 2

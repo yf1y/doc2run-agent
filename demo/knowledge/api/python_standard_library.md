@@ -19,4 +19,3 @@ The `collections.Counter` class counts hashable values. `statistics.mean(values)
 ## Command-line arguments
 
 Use `argparse.ArgumentParser` for scripts with command-line inputs. Add positional or optional arguments with `add_argument`, then call `parse_args()`. Put executable behavior inside `main()` and call it under `if __name__ == "__main__":`.
-

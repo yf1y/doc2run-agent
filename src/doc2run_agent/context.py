@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import math
 import re
 from typing import Any
@@ -34,10 +33,18 @@ def complete_and_record(
     input_tokens = estimate_tokens(system_prompt + "\n" + user_prompt)
     settings = getattr(model, "settings", None)
     context_limit = int(getattr(settings, "context_tokens", 16_000))
-    if input_tokens > context_limit:
+    output_reserve = int(getattr(settings, "max_tokens", 0))
+    input_limit = context_limit - output_reserve
+    if input_limit < 1:
+        raise ValueError(
+            f"The {stage} model configuration leaves no input space: "
+            f"context_tokens={context_limit}, max_tokens={output_reserve}"
+        )
+    if input_tokens > input_limit:
         raise ValueError(
             f"The {stage} input is about {input_tokens} tokens, above its "
-            f"configured {context_limit}-token context budget"
+            f"configured {input_limit}-token input budget after reserving "
+            f"{output_reserve} output tokens"
         )
     response = model.complete(system_prompt, user_prompt)
     record = ModelContextRecord(
@@ -58,6 +65,19 @@ def context_sources(context: list[dict[str, Any]], prompt: str | None = None) ->
     if prompt is not None:
         sources = [source for source in sources if source in prompt]
     return list(dict.fromkeys(sources))
+
+
+def merge_context(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group:
+            source = str(item.get("source", ""))
+            if source in seen:
+                continue
+            seen.add(source)
+            merged.append(item)
+    return merged
 
 
 def trim_run_result(run_result: dict[str, Any], *, stdout_limit: int = 2000, stderr_limit: int = 6000) -> dict[str, Any]:
@@ -106,7 +126,3 @@ def _fenced(value: str, language: str) -> str:
     longest = max((len(match.group(0)) for match in re.finditer(r"`+", value)), default=2)
     fence = "`" * max(3, longest + 1)
     return f"{fence}{language}\n{value}\n{fence}"
-
-
-def json_text(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, indent=2)

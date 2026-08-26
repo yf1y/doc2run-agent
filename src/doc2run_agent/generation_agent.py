@@ -4,7 +4,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
-from .context import complete_and_record, context_sources
+from .context import complete_and_record, context_sources, merge_context
 from .knowledge_tools import KnowledgeSearchTool
 from .llm import TextModel
 from .memory_store import ScenarioMemoryStore
@@ -68,7 +68,7 @@ def build_generation_agent_graph(
             user_prompt=prompt,
             current=state.get("context_records"),
             sources=context_sources(
-                _merge_context(state["retrieved_context"], state.get("scenario_context", [])),
+                merge_context(state["retrieved_context"], state.get("scenario_context", [])),
                 prompt,
             ),
         )
@@ -135,7 +135,7 @@ def build_generation_agent_graph(
         prompt = plan_review_request(
             state["task_spec"],
             state["implementation_plan"],
-            _merge_context(state["retrieved_context"], state.get("additional_context", [])),
+            merge_context(state["retrieved_context"], state.get("additional_context", [])),
             state.get("scenario_context", []),
         )
         response, records = complete_and_record(
@@ -145,15 +145,24 @@ def build_generation_agent_graph(
             user_prompt=prompt,
             current=state.get("context_records"),
             sources=context_sources(
-                _merge_context(state["retrieved_context"], state.get("additional_context", [])),
+                merge_context(state["retrieved_context"], state.get("additional_context", [])),
                 prompt,
             ),
         )
         review = parse_model(response, PlanReview)
-        return {"plan_review": review.model_dump(mode="json"), "context_records": records}
+        ready = review.ok and not review.search_queries
+        return {
+            "plan_review": review.model_dump(mode="json"),
+            "context_records": records,
+            "status": "plan_ready" if ready else "plan_rejected",
+        }
+
+    def route_after_final_review(state: OrchestratorState) -> str:
+        review = PlanReview.model_validate(state["plan_review"])
+        return "generate_code" if review.ok and not review.search_queries else "stop"
 
     def generate(state: OrchestratorState) -> dict[str, object]:
-        context = _merge_context(state["retrieved_context"], state.get("additional_context", []))
+        context = merge_context(state["retrieved_context"], state.get("additional_context", []))
         prompt = code_request(
             state["task_spec"],
             context,
@@ -168,7 +177,7 @@ def build_generation_agent_graph(
             user_prompt=prompt,
             current=state.get("context_records"),
             sources=context_sources(
-                _merge_context(context, state.get("scenario_context", [])), prompt
+                merge_context(context, state.get("scenario_context", [])), prompt
             ),
         )
         code = sanitize_code(response)
@@ -204,20 +213,11 @@ def build_generation_agent_graph(
     )
     builder.add_edge("search_missing_knowledge", "revise_implementation_plan")
     builder.add_edge("revise_implementation_plan", "review_revised_plan")
-    builder.add_edge("review_revised_plan", "generate_code")
+    builder.add_conditional_edges(
+        "review_revised_plan",
+        route_after_final_review,
+        {"generate_code": "generate_code", "stop": END},
+    )
     builder.add_edge("generate_code", "validate_code")
     builder.add_edge("validate_code", END)
     return builder.compile()
-
-
-def _merge_context(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for group in groups:
-        for item in group:
-            source = str(item.get("source", ""))
-            if source in seen:
-                continue
-            seen.add(source)
-            merged.append(item)
-    return merged
