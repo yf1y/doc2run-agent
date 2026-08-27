@@ -1,9 +1,11 @@
+"""Tests for durable sessions and confirmed-contract snapshots."""
+
 import json
 
 import pytest
 
+from doc2run_agent.storage.sessions import FileSessionStore
 from doc2run_agent.schemas import InputSpec, OutputSpec
-from doc2run_agent.session_store import FileSessionStore
 
 
 def test_session_round_trip(tmp_path):
@@ -27,6 +29,7 @@ def test_confirmed_spec_is_versioned(tmp_path):
     record.draft_spec.outputs = [OutputSpec(name="report", format="CSV", destination="report.csv")]
     record.draft_spec.acceptance_criteria = ["CSV contains one row per category"]
     record.draft_spec.status = "ready_for_confirmation"
+    record.draft_plan = "# 场景目标\n\nCreate a report.\n\n# 验收\n\n- CSV is valid"
 
     snapshot = store.snapshot_confirmed_spec(record)
 
@@ -35,6 +38,9 @@ def test_confirmed_spec_is_versioned(tmp_path):
         (tmp_path / "versioned" / "task_specs" / "task_spec_v1.json").read_text(encoding="utf-8")
     )
     assert saved["status"] == "confirmed"
+    assert (tmp_path / "versioned" / "planning" / "confirmed_plan.md").read_text(
+        encoding="utf-8"
+    ).strip() == record.confirmed_plan
 
 
 def test_session_id_cannot_escape_base_directory(tmp_path):
@@ -42,3 +48,13 @@ def test_session_id_cannot_escape_base_directory(tmp_path):
 
     with pytest.raises(ValueError, match="session_id"):
         store.load_or_create("../outside")
+
+
+def test_session_listing_excludes_archives(tmp_path):
+    store = FileSessionStore(tmp_path)
+    store.load_or_create("active")
+    archived = tmp_path / "archives" / "hidden"
+    archived.mkdir(parents=True)
+    (archived / "session.json").write_text("{}", encoding="utf-8")
+
+    assert store.list_session_ids() == ["active"]

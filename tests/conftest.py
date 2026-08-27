@@ -1,3 +1,5 @@
+"""Shared deterministic model responses and helpers for the test suite."""
+
 from __future__ import annotations
 
 from collections import deque
@@ -5,6 +7,8 @@ import json
 
 
 class FakeModel:
+    """Minimal queued-response model used to test agents without network calls."""
+
     def __init__(self, responses: list[str]) -> None:
         self.responses = deque(responses)
         self.calls: list[tuple[str, str]] = []
@@ -23,25 +27,12 @@ def task_spec_json() -> str:
     )
 
 
-def implementation_plan_response() -> str:
-    return json.dumps(
-        {
-            "summary": "Produce the requested output",
-            "required_inputs": [],
-            "steps": ["Build the result", "Print JSON"],
-            "api_usage": [],
-            "missing_information": [],
-        }
-    )
-
-
-def plan_review_response(*, ok: bool = True, queries: list[str] | None = None) -> str:
-    return json.dumps(
-        {
-            "ok": ok,
-            "problems": [] if ok else ["More documentation is needed"],
-            "search_queries": queries or [],
-        }
+def scenario_plan_text() -> str:
+    return (
+        "# 场景目标\n\n生成 JSON 输出。\n\n"
+        "# 器件清单\n\n- 一个结果对象\n\n"
+        "# 排布与连接关系\n\n- 构造结果并输出到 stdout\n\n"
+        "# 输出与验收标准\n\n- stdout 是有效 JSON\n"
     )
 
 

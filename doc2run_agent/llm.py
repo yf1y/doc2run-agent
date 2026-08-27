@@ -1,3 +1,5 @@
+"""Provider-neutral model settings and synchronous LiteLLM adapters."""
+
 from __future__ import annotations
 
 import os
@@ -45,9 +47,9 @@ class ModelSettings:
 
 @dataclass(frozen=True)
 class AgentModelSettings:
-    """Independent model settings for the three semantic agent stages."""
+    """Independent model settings for the model-backed Chat, Code, and Fix stages."""
 
-    requirements: ModelSettings
+    chat: ModelSettings
     code: ModelSettings
     fix: ModelSettings
 
@@ -55,7 +57,7 @@ class AgentModelSettings:
     def from_env(cls) -> "AgentModelSettings":
         shared = _global_settings(require_model=False)
         return cls(
-            requirements=_role_settings("REQUIREMENTS", shared),
+            chat=_role_settings("CHAT", shared),
             code=_role_settings("CODE", shared),
             fix=_role_settings("FIX", shared),
         )
@@ -63,23 +65,23 @@ class AgentModelSettings:
 
 @dataclass
 class AgentModels:
-    """The explicit models consumed by Requirements, Code, and Fix Agent."""
+    """The explicit models consumed by Chat, Code, and Fix."""
 
-    requirements: TextModel
+    chat: TextModel
     code: TextModel
     fix: TextModel
     _runtime: _LiteLLMRuntime | None = field(default=None, repr=False)
 
     @classmethod
     def shared(cls, model: TextModel) -> "AgentModels":
-        return cls(requirements=model, code=model, fix=model)
+        return cls(chat=model, code=model, fix=model)
 
     def close(self) -> None:
         if self._runtime is not None:
             self._runtime.close()
             return
         closed: set[int] = set()
-        for model in (self.requirements, self.code, self.fix):
+        for model in (self.chat, self.code, self.fix):
             close = getattr(model, "close", None)
             if callable(close) and id(model) not in closed:
                 close()
@@ -180,16 +182,16 @@ def create_agent_models(settings: AgentModelSettings | None = None) -> AgentMode
     """Create the independently configured model set used by the workflow."""
 
     selected = settings or AgentModelSettings.from_env()
-    all_settings = (selected.requirements, selected.code, selected.fix)
+    all_settings = (selected.chat, selected.code, selected.fix)
     trust_values = {item.trust_env for item in all_settings}
     if len(trust_values) != 1:
         raise ValueError("All agent models must use the same trust_env setting")
     runtime = _LiteLLMRuntime(
-        trust_env=selected.requirements.trust_env,
+        trust_env=selected.chat.trust_env,
         timeout_seconds=max(item.timeout_seconds for item in all_settings),
     )
     return AgentModels(
-        requirements=LiteLLMModel(selected.requirements, runtime=runtime),
+        chat=LiteLLMModel(selected.chat, runtime=runtime),
         code=LiteLLMModel(selected.code, runtime=runtime),
         fix=LiteLLMModel(selected.fix, runtime=runtime),
         _runtime=runtime,

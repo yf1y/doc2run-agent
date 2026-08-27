@@ -1,3 +1,5 @@
+"""Tests for layered model configuration and validation."""
+
 import os
 
 import pytest
@@ -17,10 +19,10 @@ def test_yaml_and_sibling_dotenv_override_environment_fallbacks(tmp_path, monkey
     max_retries: 3
     max_tokens: 3000
     context_tokens: 12000
-  requirements:
-    model: anthropic/requirements
-    api_base: http://requirements.local
-    api_key_env: TEST_REQUIREMENTS_SECRET
+  chat:
+    model: anthropic/chat
+    api_base: http://chat.local
+    api_key_env: TEST_CHAT_SECRET
   code:
     model: openai/code
     api_key: code-literal-key
@@ -34,7 +36,7 @@ def test_yaml_and_sibling_dotenv_override_environment_fallbacks(tmp_path, monkey
         encoding="utf-8",
     )
     (tmp_path / ".env").write_text(
-        "TEST_REQUIREMENTS_SECRET=dotenv-secret\n", encoding="utf-8"
+        "TEST_CHAT_SECRET=dotenv-secret\n", encoding="utf-8"
     )
     monkeypatch.setenv("DOC2RUN_AGENT_MODEL", "openai/environment-fallback")
     monkeypatch.setenv("DOC2RUN_AGENT_API_BASE", "http://environment.local/v1")
@@ -42,14 +44,14 @@ def test_yaml_and_sibling_dotenv_override_environment_fallbacks(tmp_path, monkey
     try:
         settings = load_agent_model_settings(config_path)
     finally:
-        os.environ.pop("TEST_REQUIREMENTS_SECRET", None)
+        os.environ.pop("TEST_CHAT_SECRET", None)
 
-    assert settings.requirements.model == "anthropic/requirements"
-    assert settings.requirements.api_base == "http://requirements.local"
-    assert settings.requirements.api_key == "dotenv-secret"
-    assert settings.requirements.timeout_seconds == 90
-    assert settings.requirements.context_tokens == 12000
-    assert settings.requirements.max_tokens == 3000
+    assert settings.chat.model == "anthropic/chat"
+    assert settings.chat.api_base == "http://chat.local"
+    assert settings.chat.api_key == "dotenv-secret"
+    assert settings.chat.timeout_seconds == 90
+    assert settings.chat.context_tokens == 12000
+    assert settings.chat.max_tokens == 3000
     assert settings.code.model == "openai/code"
     assert settings.code.api_base == "http://yaml-default.local/v1"
     assert settings.code.api_key == "code-literal-key"
@@ -78,7 +80,7 @@ def test_default_config_is_discovered_in_current_directory(tmp_path, monkeypatch
     finally:
         os.environ.pop("TEST_SHARED_SECRET", None)
 
-    assert settings.requirements.api_key == "shared-secret"
+    assert settings.chat.api_key == "shared-secret"
     assert settings.code.api_key == "shared-secret"
     assert settings.fix.api_key == "shared-secret"
 

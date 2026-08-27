@@ -1,32 +1,26 @@
-# Python
+# Python caches and test output
 __pycache__/
 *.py[cod]
-*.egg-info/
 .pytest_cache/
-.ruff_cache/
-.mypy_cache/
 .coverage
 htmlcov/
-build/
-dist/
 
-# Virtual environments
+# Virtual environments and package builds
 .venv/
 venv/
+build/
+dist/
+*.egg-info/
 
 # Local configuration and secrets
 .env
 .env.*
 !.env.example
-!demo/.env.example
-doc2run_agent.yaml
-!demo/doc2run_agent.yaml
 
-# Runtime artifacts
+# Local Doc2Run sessions and generated artifacts
 sessions/
-memory/
 
-# Editors and operating systems
+# Editor and operating-system files
 .idea/
 .vscode/
 .DS_Store

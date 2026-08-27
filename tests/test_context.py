@@ -1,21 +1,24 @@
+"""Tests for model-context budgeting, trimming, and artifact recording."""
+
 import json
 
 import pytest
 
-from doc2run_agent.artifacts import ArtifactManager
-from doc2run_agent.context import (
+from doc2run_agent.storage.artifacts import ArtifactManager
+from doc2run_agent.storage.sessions import FileSessionStore
+from doc2run_agent.agents.context import (
     complete_and_record,
     estimate_tokens,
     merge_context,
     trim_run_result,
 )
 from doc2run_agent.llm import ModelSettings
-from doc2run_agent.session_store import FileSessionStore
-
 from conftest import FakeModel
 
 
 class LimitedFakeModel(FakeModel):
+    """Fake model with a deliberately small context window for budget tests."""
+
     settings = ModelSettings(model="fake", context_tokens=1000, max_tokens=100)
 
 
@@ -72,3 +75,18 @@ def test_context_artifacts_append_without_duplicating_calls(tmp_path):
     )
     assert [item["stage"] for item in manifest] == ["first", "second"]
     assert len(list((tmp_path / "demo" / "contexts").glob("*.md"))) == 2
+
+
+def test_api_context_artifact_keeps_all_selected_documents(tmp_path):
+    manager = ArtifactManager(FileSessionStore(tmp_path))
+    context = [
+        {"source": "api:first", "content": "A" * 20_000, "heading": "First"},
+        {"source": "api:second", "content": "second signature", "heading": "Second"},
+    ]
+
+    path = manager.save_api_context("demo", context)
+
+    saved = path.read_text(encoding="utf-8")
+    assert "api:first" in saved
+    assert "api:second" in saved
+    assert "second signature" in saved

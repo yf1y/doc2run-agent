@@ -1,3 +1,5 @@
+"""Tests for provider-neutral LiteLLM settings and retry behavior."""
+
 from types import SimpleNamespace
 
 import pytest
@@ -40,9 +42,9 @@ def test_agent_model_settings_allow_independent_model_url_key_and_limits(monkeyp
     monkeypatch.setenv("DOC2RUN_AGENT_API_KEY", "default-key")
     monkeypatch.setenv("DOC2RUN_AGENT_MODEL_TIMEOUT", "100")
     monkeypatch.setenv("DOC2RUN_AGENT_MODEL_MAX_RETRIES", "2")
-    monkeypatch.setenv("DOC2RUN_AGENT_REQUIREMENTS_MODEL", "anthropic/requirements")
-    monkeypatch.setenv("DOC2RUN_AGENT_REQUIREMENTS_API_BASE", "http://requirements.local")
-    monkeypatch.setenv("DOC2RUN_AGENT_REQUIREMENTS_API_KEY", "requirements-key")
+    monkeypatch.setenv("DOC2RUN_AGENT_CHAT_MODEL", "anthropic/chat")
+    monkeypatch.setenv("DOC2RUN_AGENT_CHAT_API_BASE", "http://chat.local")
+    monkeypatch.setenv("DOC2RUN_AGENT_CHAT_API_KEY", "chat-key")
     monkeypatch.setenv("DOC2RUN_AGENT_CODE_MODEL", "openai/code")
     monkeypatch.setenv("DOC2RUN_AGENT_CODE_API_BASE", "http://code.local/v1")
     monkeypatch.setenv("DOC2RUN_AGENT_CODE_API_KEY", "code-key")
@@ -54,10 +56,10 @@ def test_agent_model_settings_allow_independent_model_url_key_and_limits(monkeyp
 
     settings = AgentModelSettings.from_env()
 
-    assert settings.requirements == ModelSettings(
-        model="anthropic/requirements",
-        api_base="http://requirements.local",
-        api_key="requirements-key",
+    assert settings.chat == ModelSettings(
+        model="anthropic/chat",
+        api_base="http://chat.local",
+        api_key="chat-key",
         timeout_seconds=100,
         max_retries=2,
     )
@@ -79,13 +81,13 @@ def test_agent_model_settings_allow_independent_model_url_key_and_limits(monkeyp
 
 def test_agent_models_do_not_require_global_model_when_all_roles_are_set(monkeypatch):
     monkeypatch.delenv("DOC2RUN_AGENT_MODEL", raising=False)
-    monkeypatch.setenv("DOC2RUN_AGENT_REQUIREMENTS_MODEL", "openai/requirements")
+    monkeypatch.setenv("DOC2RUN_AGENT_CHAT_MODEL", "openai/chat")
     monkeypatch.setenv("DOC2RUN_AGENT_CODE_MODEL", "openai/code")
     monkeypatch.setenv("DOC2RUN_AGENT_FIX_MODEL", "openai/fix")
 
     settings = AgentModelSettings.from_env()
 
-    assert settings.requirements.model == "openai/requirements"
+    assert settings.chat.model == "openai/chat"
     assert settings.code.model == "openai/code"
     assert settings.fix.model == "openai/fix"
 

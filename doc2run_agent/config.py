@@ -1,3 +1,5 @@
+"""Load and validate YAML, dotenv, and environment-backed model configuration."""
+
 from __future__ import annotations
 
 import os
@@ -12,10 +14,9 @@ from .llm import AgentModelSettings, ModelSettings
 
 
 DEFAULT_CONFIG_NAME = "doc2run_agent.yaml"
-ROLE_NAMES = ("requirements", "code", "fix")
-
-
 class ModelConfig(BaseModel):
+    """Optional configuration overrides for one model-backed stage."""
+
     model_config = ConfigDict(extra="forbid")
 
     model: str | None = None
@@ -35,15 +36,19 @@ class ModelConfig(BaseModel):
 
 
 class ModelsConfig(BaseModel):
+    """Group shared defaults with the Chat, Code, and Fix model settings."""
+
     model_config = ConfigDict(extra="forbid")
 
     defaults: ModelConfig = Field(default_factory=ModelConfig)
-    requirements: ModelConfig = Field(default_factory=ModelConfig)
+    chat: ModelConfig = Field(default_factory=ModelConfig)
     code: ModelConfig = Field(default_factory=ModelConfig)
     fix: ModelConfig = Field(default_factory=ModelConfig)
 
 
 class ProjectConfig(BaseModel):
+    """Represent the validated root of ``doc2run_agent.yaml``."""
+
     model_config = ConfigDict(extra="forbid")
 
     models: ModelsConfig = Field(default_factory=ModelsConfig)
@@ -65,7 +70,7 @@ def load_agent_model_settings(config_path: str | Path | None = None) -> AgentMod
         raise ValueError("Configuration root must be a YAML object")
     config = ProjectConfig.model_validate(raw)
     return AgentModelSettings(
-        requirements=_resolve_role("requirements", config.models),
+        chat=_resolve_role("chat", config.models),
         code=_resolve_role("code", config.models),
         fix=_resolve_role("fix", config.models),
     )

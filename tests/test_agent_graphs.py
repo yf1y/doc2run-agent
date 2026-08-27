@@ -1,25 +1,20 @@
+"""Tests for the isolated Code and Fix stage graphs."""
+
 import json
 
-import pytest
-
-from doc2run_agent.generation_agent import build_generation_agent_graph
-from doc2run_agent.fix_agent import build_fix_agent_graph
-from doc2run_agent.knowledge_tools import KnowledgeSearchTool
-from doc2run_agent.retriever import LocalKnowledgeBase
+from doc2run_agent.agents.fix import build_fix_agent_graph
+from doc2run_agent.agents.code import build_code_agent_graph
+from doc2run_agent.knowledge.retriever import LocalKnowledgeBase
+from doc2run_agent.knowledge.tools import KnowledgeSearchTool
 from doc2run_agent.schemas import TaskSpec
 
-from conftest import (
-    FakeModel,
-    fix_plan_response,
-    implementation_plan_response,
-    patch_response,
-    patch_review_response,
-    plan_review_response,
-)
+from conftest import FakeModel, fix_plan_response, patch_response, patch_review_response, scenario_plan_text
 
 
 def make_tool(tmp_path):
-    (tmp_path / "api.md").write_text("Use json.dumps to serialize output.", encoding="utf-8")
+    (tmp_path / "api.md").write_text(
+        "Use json.dumps(value) to serialize output.", encoding="utf-8"
+    )
     return KnowledgeSearchTool(LocalKnowledgeBase.from_directory(tmp_path))
 
 
@@ -33,72 +28,69 @@ def task_spec():
     ).model_dump(mode="json")
 
 
-def test_generation_agent_subgraph_retrieves_generates_and_validates(tmp_path):
+def test_code_searches_api_from_confirmed_plan_then_generates(tmp_path):
     model = FakeModel(
         [
-            json.dumps({"queries": ["JSON serialization"]}),
-            implementation_plan_response(),
-            plan_review_response(),
+            json.dumps({"queries": ["json.dumps serialization"]}),
             "import json\nprint(json.dumps({'ok': True}))",
         ]
     )
-    graph = build_generation_agent_graph(model, make_tool(tmp_path))
+    graph = build_code_agent_graph(model, make_tool(tmp_path))
 
-    result = graph.invoke({"task_spec": task_spec()})
+    result = graph.invoke(
+        {"task_spec": task_spec(), "scenario_plan": scenario_plan_text(), "decisions": []}
+    )
 
     assert result["code_validation"]["ok"] is True
     assert result["retrieved_context"]
     assert {
-        "plan_retrieval",
-        "search_knowledge",
-        "create_implementation_plan",
-        "review_implementation_plan",
+        "plan_api_retrieval",
+        "search_api_knowledge",
         "generate_code",
         "validate_code",
     }.issubset(graph.get_graph().nodes)
-    assert result["implementation_plan"]["steps"]
-    assert len(result["context_records"]) == 4
+    assert scenario_plan_text() in model.calls[0][1]
+    assert scenario_plan_text() in model.calls[1][1]
+    assert "json.dumps" in model.calls[1][1]
+    assert len(result["context_records"]) == 2
 
 
-def test_generation_keeps_api_and_domain_documents_separate(tmp_path):
-    api_directory = tmp_path / "api"
-    domain_directory = tmp_path / "domain"
-    api_directory.mkdir()
-    domain_directory.mkdir()
-    (api_directory / "reference.md").write_text(
-        "create_node(name: str) creates one node.", encoding="utf-8"
+def test_code_does_not_retrieve_scene_knowledge_in_code_stage(tmp_path):
+    model = FakeModel(
+        [json.dumps({"queries": ["create_node"]}), "print('{}')"]
     )
-    (domain_directory / "layout.md").write_text(
-        "The approved feeder layout has 33 connected nodes.", encoding="utf-8"
+    graph = build_code_agent_graph(model, make_tool(tmp_path))
+
+    result = graph.invoke(
+        {"task_spec": task_spec(), "scenario_plan": "# 5 节点\n\n- 节点 1 到 5 顺序连接"}
+    )
+
+    assert all(str(item["source"]).endswith("api.md#1.1") for item in result["retrieved_context"])
+    assert "Selected Scene" not in model.calls[1][1]
+
+
+def test_code_accepts_sdk_import_only_when_api_context_documents_it(tmp_path):
+    (tmp_path / "sdk.md").write_text(
+        "from private_sdk import Client\n\nClient() creates a client.", encoding="utf-8"
     )
     model = FakeModel(
         [
-            json.dumps({"queries": ["create nodes for feeder layout"]}),
-            implementation_plan_response(),
-            plan_review_response(),
-            "print('{}')",
+            json.dumps({"queries": ["private_sdk Client"]}),
+            "from private_sdk import Client\nprint(Client)",
         ]
     )
-    graph = build_generation_agent_graph(
-        model,
-        KnowledgeSearchTool(LocalKnowledgeBase.from_directory(api_directory)),
-        domain="power",
-        domain_knowledge_tool=KnowledgeSearchTool(
-            LocalKnowledgeBase.from_directory(domain_directory)
-        ),
+    graph = build_code_agent_graph(
+        model, KnowledgeSearchTool(LocalKnowledgeBase.from_directory(tmp_path))
     )
 
-    result = graph.invoke({"task_spec": task_spec()})
+    result = graph.invoke(
+        {"task_spec": task_spec(), "scenario_plan": scenario_plan_text()}
+    )
 
-    assert "create_node" in result["retrieved_context"][0]["content"]
-    assert "33 connected nodes" in result["domain_context"][0]["content"]
-    plan_prompt = model.calls[1][1]
-    assert "Selected API documentation" in plan_prompt
-    assert "Selected domain documentation" in plan_prompt
-    assert plan_prompt.index("create_node") < plan_prompt.index("33 connected nodes")
+    assert result["code_validation"]["ok"] is True
 
 
-def test_fix_agent_subgraph_classifies_retrieves_repairs_and_validates(tmp_path):
+def test_fix_agent_retrieves_api_and_preserves_confirmed_plan(tmp_path):
     model = FakeModel(
         [
             fix_plan_response(),
@@ -109,6 +101,7 @@ def test_fix_agent_subgraph_classifies_retrieves_repairs_and_validates(tmp_path)
     graph = build_fix_agent_graph(model, make_tool(tmp_path))
     state = {
         "task_spec": task_spec(),
+        "scenario_plan": scenario_plan_text(),
         "code": "raise RuntimeError('broken')",
         "code_validation": {"ok": True, "errors": [], "imports": []},
         "run_result": {
@@ -126,108 +119,10 @@ def test_fix_agent_subgraph_classifies_retrieves_repairs_and_validates(tmp_path)
     result = graph.invoke(state)
 
     assert result["error_info"]["category"] == "runtime_error"
-    assert result["fix_attempts"] == 1
     assert result["code_validation"]["ok"] is True
     assert result["code"] == "print('fixed')\n"
-
-
-def test_fix_agent_retrieves_domain_rules_separately(tmp_path):
-    api_directory = tmp_path / "api"
-    domain_directory = tmp_path / "domain"
-    api_directory.mkdir()
-    domain_directory.mkdir()
-    (api_directory / "reference.md").write_text(
-        "serialize_result(value) returns JSON.", encoding="utf-8"
-    )
-    (domain_directory / "rules.md").write_text(
-        "Every feeder output must preserve node connectivity.", encoding="utf-8"
-    )
-    model = FakeModel(
-        [
-            fix_plan_response(),
-            patch_response("raise RuntimeError('broken')", "print('fixed')"),
-            patch_review_response(),
-        ]
-    )
-    graph = build_fix_agent_graph(
-        model,
-        KnowledgeSearchTool(LocalKnowledgeBase.from_directory(api_directory)),
-        domain_knowledge_tool=KnowledgeSearchTool(
-            LocalKnowledgeBase.from_directory(domain_directory)
-        ),
-    )
-    state = {
-        "task_spec": task_spec(),
-        "code": "raise RuntimeError('broken')",
-        "code_validation": {"ok": True, "errors": [], "imports": []},
-        "run_result": {
-            "ok": False,
-            "returncode": 1,
-            "stdout": "",
-            "stderr": "RuntimeError: broken",
-            "timed_out": False,
-            "duration_seconds": 0.1,
-        },
-        "retrieved_context": [],
-        "fix_attempts": 0,
-    }
-
-    result = graph.invoke(state)
-
-    assert "connectivity" in result["fix_domain_context"][0]["content"]
-    patch_prompt = model.calls[1][1]
-    assert "Relevant API documentation" in patch_prompt
-    assert "Relevant domain documentation" in patch_prompt
-
-
-def test_generation_agent_searches_again_when_plan_review_finds_a_gap(tmp_path):
-    model = FakeModel(
-        [
-            json.dumps({"queries": ["JSON serialization"]}),
-            implementation_plan_response(),
-            plan_review_response(ok=False, queries=["json.dumps exact signature"]),
-            implementation_plan_response(),
-            plan_review_response(),
-            "print('{}')",
-        ]
-    )
-    graph = build_generation_agent_graph(model, make_tool(tmp_path))
-
-    result = graph.invoke({"task_spec": task_spec()})
-
-    assert result["additional_retrieval_queries"] == ["json.dumps exact signature"]
-    assert result["additional_context"]
-    assert result["plan_review"]["ok"] is True
-    assert len(result["context_records"]) == 6
-
-
-@pytest.mark.parametrize(
-    "final_review",
-    [
-        plan_review_response(ok=False),
-        plan_review_response(ok=True, queries=["one more unresolved API detail"]),
-    ],
-)
-def test_generation_agent_stops_when_final_plan_review_is_not_ready(tmp_path, final_review):
-    model = FakeModel(
-        [
-            json.dumps({"queries": ["JSON serialization"]}),
-            implementation_plan_response(),
-            plan_review_response(ok=False, queries=["json.dumps exact signature"]),
-            implementation_plan_response(),
-            final_review,
-        ]
-    )
-    graph = build_generation_agent_graph(model, make_tool(tmp_path))
-
-    result = graph.invoke({"task_spec": task_spec()})
-
-    assert result["status"] == "plan_rejected"
-    assert not (
-        result["plan_review"]["ok"] and not result["plan_review"]["search_queries"]
-    )
-    assert "code" not in result
-    assert len(model.calls) == 5
+    assert scenario_plan_text() in model.calls[0][1]
+    assert scenario_plan_text() in model.calls[1][1]
 
 
 def test_fix_agent_does_not_run_a_patch_rejected_by_review(tmp_path):
@@ -241,6 +136,7 @@ def test_fix_agent_does_not_run_a_patch_rejected_by_review(tmp_path):
     graph = build_fix_agent_graph(model, make_tool(tmp_path))
     state = {
         "task_spec": task_spec(),
+        "scenario_plan": scenario_plan_text(),
         "code": "raise RuntimeError('broken')",
         "code_validation": {"ok": True, "errors": [], "imports": []},
         "run_result": {

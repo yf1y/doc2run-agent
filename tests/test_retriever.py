@@ -1,6 +1,9 @@
+"""Tests for local multi-format knowledge loading and relevance ranking."""
+
 import pytest
 
-from doc2run_agent.retriever import LocalKnowledgeBase
+from doc2run_agent.knowledge.retriever import LocalKnowledgeBase
+from doc2run_agent.knowledge.tools import KnowledgeSearchTool
 
 
 def test_retriever_ranks_relevant_document_first(tmp_path):
@@ -26,6 +29,16 @@ def test_retriever_reads_jsonl_entries(tmp_path):
     assert "write_text" in knowledge.search("write text", top_k=1)[0].content
 
 
+def test_retriever_reads_yaml_and_yml_as_knowledge(tmp_path):
+    (tmp_path / "api.yaml").write_text("method: create_node\nreturns: node", encoding="utf-8")
+    (tmp_path / "rules.yml").write_text("retry: exponential", encoding="utf-8")
+
+    knowledge = LocalKnowledgeBase.from_directory(tmp_path)
+
+    assert "create_node" in knowledge.search("create_node", top_k=1)[0].content
+    assert "exponential" in knowledge.search("exponential retry", top_k=2)[0].content
+
+
 def test_retriever_ignores_markdown_template_comments(tmp_path):
     (tmp_path / "placeholder.md").write_text(
         "<!-- Replace this comment with real documentation. -->", encoding="utf-8"
@@ -41,6 +54,40 @@ def test_retriever_can_mark_the_knowledge_source(tmp_path):
     knowledge = LocalKnowledgeBase.from_directory(tmp_path, source_prefix="api:")
 
     assert knowledge.search("create_node", top_k=1)[0].source.startswith("api:")
+
+
+def test_search_tool_refreshes_directory_backed_knowledge(tmp_path):
+    document = tmp_path / "reference.md"
+    document.write_text("old_api()", encoding="utf-8")
+    tool = KnowledgeSearchTool(
+        LocalKnowledgeBase.from_directory(tmp_path),
+        source_directory=tmp_path,
+    )
+
+    document.write_text("new_api()", encoding="utf-8")
+    tool.refresh()
+
+    assert "new_api" in tool.search_many(["new_api"])[0]["content"]
+
+
+def test_optional_search_tool_can_refresh_documents_added_later(tmp_path):
+    source = tmp_path / "domain-docs"
+    tool = KnowledgeSearchTool(
+        None,
+        source_directory=source,
+        source_prefix="domain:power:",
+        allow_empty=True,
+    )
+
+    tool.refresh()
+    assert tool.search_many(["topology"]) == []
+
+    source.mkdir()
+    (source / "topology.md").write_text("The feeder topology is radial.", encoding="utf-8")
+    tool.refresh()
+
+    assert tool.has_knowledge is True
+    assert tool.search_many(["radial topology"])[0]["source"].startswith("domain:power:")
 
 
 def test_markdown_chunk_keeps_heading_and_code_block_together(tmp_path):

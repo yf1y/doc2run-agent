@@ -1,7 +1,9 @@
+"""Tests for generated-code dependency and filesystem validation rules."""
+
 import pytest
 
+from doc2run_agent.runtime.validation import validate_code
 from doc2run_agent.schemas import TaskSpec
-from doc2run_agent.validation import validate_code
 
 
 def spec(**updates):
@@ -29,6 +31,16 @@ def test_validation_rejects_unknown_dependency():
 
     assert result.ok is False
     assert "pandas" in result.errors[0]
+
+
+def test_validation_allows_private_sdk_import_documented_by_retrieved_api():
+    result = validate_code(
+        "from private_sdk.client import Client\nprint(Client)",
+        spec(),
+        [{"source": "api:setup.md", "content": "from private_sdk.client import Client"}],
+    )
+
+    assert result.ok is True
 
 
 def test_validation_rejects_absolute_write_and_process_execution():
@@ -71,6 +83,16 @@ def test_validation_rejects_destructive_calls_through_simple_aliases(code):
 def test_validation_rejects_absolute_path_open_through_path_alias():
     result = validate_code(
         "from pathlib import Path as P\nP('/tmp/output.txt').open('w').write('x')",
+        spec(),
+    )
+
+    assert result.ok is False
+    assert any("absolute path" in error for error in result.errors)
+
+
+def test_validation_rejects_absolute_write_through_builtins_open_alias():
+    result = validate_code(
+        "from builtins import open as safe\nsafe('/tmp/output.txt', 'w').write('x')",
         spec(),
     )
 

@@ -1,4 +1,6 @@
-from doc2run_agent.errors import classify_failure
+"""Tests for normalized validation and runtime error classification."""
+
+from doc2run_agent.runtime.errors import classify_failure
 from doc2run_agent.schemas import CodeValidation, RunResult
 
 

@@ -1,4 +1,6 @@
-from doc2run_agent.code_edits import apply_code_patch
+"""Tests for applying exact and replacement code patches safely."""
+
+from doc2run_agent.runtime.code_edits import apply_code_patch
 from doc2run_agent.schemas import CodePatch
 
 

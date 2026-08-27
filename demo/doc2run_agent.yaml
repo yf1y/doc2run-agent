@@ -8,7 +8,7 @@ models:
     max_retries: 3
     max_tokens: 4000
     context_tokens: 16000
-  requirements:
+  chat:
     max_tokens: 1500
   code:
     timeout: 180
