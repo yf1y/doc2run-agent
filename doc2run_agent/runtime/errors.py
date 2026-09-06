@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import re
+import importlib.util
+from pathlib import Path
 
-from ..schemas import CodeValidation, ErrorInfo, RunResult
+from ..schemas import CodeValidation, ErrorInfo, RunResult, TaskSpec
 
 
 def classify_failure(
@@ -56,3 +58,17 @@ def _last_exception(stderr: str) -> tuple[str, str]:
         if match:
             return match.group(1), match.group(2)
     return "RuntimeError", stderr.splitlines()[-1] if stderr else "Execution failed"
+
+
+def is_environment_failure(info: ErrorInfo, spec: TaskSpec) -> bool:
+    """Stop only for absent packages or declared input files, not wrong API usage."""
+    if info.exception_type == "ModuleNotFoundError":
+        match = re.search(r"No module named ['\"]([^'\"]+)", info.message)
+        if match:
+            root = match.group(1).split(".", 1)[0]
+            return importlib.util.find_spec(root) is None
+    if info.exception_type == "FileNotFoundError":
+        for item in spec.inputs:
+            if item.required and item.source and repr(item.source) in info.message:
+                return not Path(item.source).exists()
+    return False

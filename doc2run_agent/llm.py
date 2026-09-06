@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import os
+import time
+import importlib
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+from .runtime.control import call_with_timeout, emit_event, redact, remaining_seconds, TaskTimeoutError
 
 
 class TextModel(Protocol):
     """The only model capability required by the agent graphs."""
 
     def complete(self, system_prompt: str, user_prompt: str) -> str: ...
+
+
+class ModelResponseError(ValueError):
+    """A request succeeded but did not contain usable model text."""
 
 
 @dataclass(frozen=True)
@@ -29,7 +38,7 @@ class ModelSettings:
     context_tokens: int = 16_000
 
     def __post_init__(self) -> None:
-        if self.timeout_seconds <= 0:
+        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         if self.max_retries < 0:
             raise ValueError("max_retries cannot be negative")
@@ -100,12 +109,23 @@ class _LiteLLMRuntime:
     def __init__(self, *, trust_env: bool, timeout_seconds: float) -> None:
         os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
         import httpx
-        import litellm
+
+        def load_provider():
+            module = importlib.import_module("litellm")
+            return module, module.completion
+
+        try:
+            litellm, completion = call_with_timeout(load_provider, timeout_seconds)
+        except Exception as error:
+            raise RuntimeError(
+                "Model adapter initialization failed. Check LiteLLM/tokenizer dependencies and "
+                f"network/cache availability: {redact(str(error))}"
+            ) from None
 
         self._litellm = litellm
         self._http_client = httpx.Client(timeout=timeout_seconds, trust_env=trust_env)
         litellm.client_session = self._http_client
-        self.completion = litellm.completion
+        self.completion = completion
 
     def close(self) -> None:
         if self._litellm.client_session is self._http_client:
@@ -146,7 +166,8 @@ class LiteLLMModel:
             ],
             "temperature": self.settings.temperature,
             "timeout": self.settings.timeout_seconds,
-            "num_retries": self.settings.max_retries,
+            "num_retries": 0,
+            "max_retries": 0,
             "max_tokens": self.settings.max_tokens,
         }
         if self.settings.api_base:
@@ -154,10 +175,31 @@ class LiteLLMModel:
         if self.settings.api_key:
             arguments["api_key"] = self.settings.api_key
 
-        response = self._completion(**arguments)
+        response = None
+        for attempt in range(self.settings.max_retries + 1):
+            arguments["timeout"] = remaining_seconds(self.settings.timeout_seconds)
+            started = time.monotonic()
+            emit_event("model_request", "started", model=self.settings.model, attempt=attempt + 1)
+            try:
+                response = call_with_timeout(
+                    lambda: self._completion(**arguments), arguments["timeout"]
+                )
+            except Exception as error:
+                emit_event("model_request", "failed", attempt=attempt + 1,
+                           duration_seconds=time.monotonic() - started,
+                           error=redact(f"{type(error).__name__}: {error}", self.settings.api_key or ""))
+                if isinstance(error, TaskTimeoutError) or not _retryable(error) or attempt >= self.settings.max_retries:
+                    raise
+                delay = remaining_seconds(min(2.0, 0.5 * (2 ** min(attempt, 3))))
+                emit_event("model_request", "retrying", attempt=attempt + 1, delay_seconds=delay)
+                time.sleep(delay)
+                continue
+            emit_event("model_request", "succeeded", attempt=attempt + 1,
+                       duration_seconds=time.monotonic() - started, usage=_usage(response))
+            break
         content = _response_content(response)
         if not content.strip():
-            raise ValueError("LiteLLM returned an empty text response")
+            raise ModelResponseError("LiteLLM returned an empty text response")
         return content
 
     def close(self) -> None:
@@ -258,7 +300,7 @@ def _response_content(response: Any) -> str:
         else:
             content = response.choices[0].message.content
     except (AttributeError, IndexError, KeyError, TypeError) as error:
-        raise ValueError("LiteLLM response does not contain choices[0].message.content") from error
+        raise ModelResponseError("LiteLLM response does not contain choices[0].message.content") from error
 
     if isinstance(content, str):
         return content
@@ -267,6 +309,26 @@ def _response_content(response: Any) -> str:
     if content is None:
         return ""
     return str(content)
+
+
+def _retryable(error: Exception) -> bool:
+    status = getattr(error, "status_code", None)
+    if status is None:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+    if isinstance(status, int):
+        return status in {408, 409, 429} or 500 <= status < 600
+    # No retries for authentication, invalid parameters, parsing or programming errors.
+    import httpx
+    return isinstance(error, (TimeoutError, ConnectionError, httpx.TimeoutException, httpx.NetworkError,
+                              httpx.RemoteProtocolError)) or type(error).__name__ in {"APIConnectionError", "APITimeoutError"}
+
+
+def _usage(response: Any) -> dict[str, int]:
+    value = response.get("usage") if isinstance(response, dict) else getattr(response, "usage", None)
+    if hasattr(value, "model_dump"):
+        value = value.model_dump()
+    return {key: value[key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            if isinstance(value, dict) and isinstance(value.get(key), int)}
 
 
 def _content_block_text(block: Any) -> str:

@@ -157,6 +157,11 @@ class ModelContextRecord(StrictModel):
     response: str
     estimated_tokens: int
     sources: list[str] = Field(default_factory=list)
+    call_id: str = ""
+    started_at: str = ""
+    duration_seconds: float = 0.0
+    status: str = "succeeded"
+    error: str = ""
 
 
 class CodeValidation(StrictModel):

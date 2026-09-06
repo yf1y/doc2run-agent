@@ -141,7 +141,8 @@ def test_litellm_model_passes_unified_completion_arguments():
             ],
             "temperature": 0.0,
             "timeout": 30,
-            "num_retries": 1,
+            "num_retries": 0,
+            "max_retries": 0,
             "max_tokens": 4000,
             "api_base": "http://localhost:11434",
         }
@@ -167,3 +168,75 @@ def test_litellm_model_rejects_missing_text_response():
 
     with pytest.raises(ValueError, match=r"choices\[0\]"):
         model.complete("system", "user")
+
+
+class HTTPFailure(Exception):
+    def __init__(self, status):
+        self.status_code = status
+
+
+@pytest.mark.parametrize("status,expected", [(400, 1), (401, 1), (403, 1), (429, 3), (503, 3)])
+def test_model_retries_only_transient_failures(status, expected, monkeypatch):
+    monkeypatch.setattr("doc2run_agent.llm.time.sleep", lambda _: None)
+    calls = []
+    def completion(**kwargs):
+        calls.append(kwargs)
+        raise HTTPFailure(status)
+    model = LiteLLMModel(ModelSettings(model="fake", max_retries=2), completion_fn=completion)
+    with pytest.raises(HTTPFailure):
+        model.complete("system", "user")
+    assert len(calls) == expected
+    assert all(call["num_retries"] == call["max_retries"] == 0 for call in calls)
+
+
+def test_model_transient_failure_then_success_records_usage(monkeypatch):
+    from doc2run_agent.runtime.control import run_scope
+    monkeypatch.setattr("doc2run_agent.llm.time.sleep", lambda _: None)
+    responses = iter([HTTPFailure(503), {"choices": [{"message": {"content": "ok"}}],
+                                       "usage": {"total_tokens": 7}}])
+    def completion(**kwargs):
+        result = next(responses)
+        if isinstance(result, Exception):
+            raise result
+        return result
+    model = LiteLLMModel(ModelSettings(model="fake", max_retries=2), completion_fn=completion)
+    events = []
+    with run_scope(10, events.append, lambda _: None):
+        assert model.complete("s", "u") == "ok"
+    assert len([event for event in events if event["status"] == "retrying"]) == 1
+    assert events[-1]["usage"] == {"total_tokens": 7}
+
+
+def test_model_deadline_prevents_retry_after_timeout():
+    import threading
+    from doc2run_agent.runtime.control import TaskTimeoutError, run_scope
+    release = threading.Event()
+    calls = []
+    def completion(**kwargs):
+        calls.append(kwargs)
+        release.wait(2)
+        return {"choices": [{"message": {"content": "late"}}]}
+    model = LiteLLMModel(ModelSettings(model="fake", max_retries=3), completion_fn=completion)
+    try:
+        with run_scope(0.1, lambda _: None, lambda _: None):
+            with pytest.raises(TaskTimeoutError):
+                model.complete("s", "u")
+        assert len(calls) == 1
+    finally:
+        release.set()
+
+
+@pytest.mark.parametrize("status,expected", [(401, 1), (503, 2)])
+def test_real_http_adapter_does_not_stack_sdk_retries(model_http_server, status, expected):
+    from doc2run_agent.llm import create_model
+    base, replies, requests = model_http_server
+    replies.extend([(status, "temporary failure"), (200, "中文回复正常")])
+    with create_model(ModelSettings(model="openai/local-test", api_base=base,
+                                   api_key="test-placeholder", max_retries=1, timeout_seconds=30)) as model:
+        if status == 401:
+            with pytest.raises(Exception) as error:
+                model.complete("system", "user")
+            assert error.value.status_code == 401
+        else:
+            assert model.complete("system", "user") == "中文回复正常"
+    assert len(requests) == expected

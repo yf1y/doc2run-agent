@@ -79,6 +79,24 @@ def test_cli_accepts_repeated_runtime_environment_options():
     assert args.runtime_env == ["SDK_API_TOKEN", "SDK_ENDPOINT"]
 
 
+def test_cli_relative_paths_complete_approval(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    api = tmp_path / "knowledge/api"
+    api.mkdir(parents=True)
+    (api / "api.md").write_text("Use json.dumps for JSON output.", encoding="utf-8")
+    from pathlib import Path
+    inputs = iter(["Print JSON", "/confirm", "/approve verified", "/exit"])
+    outputs = []
+    run_chat(FakeModel([completed_spec_response(), '{"queries": ["JSON"]}', "print('{}')"]),
+             session_id="relative", sessions_directory=Path("sessions"), knowledge_directory=Path("knowledge"),
+             input_fn=lambda _: next(inputs), output_fn=outputs.append)
+    record = FileSessionStore("sessions").load_or_create("relative")
+    assert record.phase == "memory"
+    assert any("[code_generation] started" in value for value in outputs)
+    assert any("[execution] succeeded" in value for value in outputs)
+    assert Path(record.approved_scene_path).exists()
+
+
 def test_cli_omits_session_to_enable_interactive_selection():
     assert build_parser().parse_args([]).session is None
     assert build_parser().parse_args(["--session", "friend-test-01"]).session == (

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from collections import deque
 import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pytest
 
 
 class FakeModel:
@@ -18,6 +22,42 @@ class FakeModel:
         if not self.responses:
             raise AssertionError("FakeModel has no response left")
         return self.responses.popleft()
+
+
+@pytest.fixture
+def model_http_server():
+    """A local provider endpoint, exercising the actual LiteLLM HTTP adapter."""
+    replies = deque()
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            requests.append(json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
+            status, text = replies.popleft() if replies else (500, "No test response left")
+            value = ({"id": "local-test", "object": "chat.completion", "created": 0,
+                      "model": "local-test", "choices": [{"index": 0, "finish_reason": "stop",
+                      "message": {"role": "assistant", "content": text}}],
+                      "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}}
+                     if status == 200 else {"error": {"message": text, "type": "test_error"}})
+            body = json.dumps(value, ensure_ascii=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/v1", replies, requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def task_spec_json() -> str:

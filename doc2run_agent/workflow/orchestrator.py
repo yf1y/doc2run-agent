@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+import math
+import time
+from typing import Any, Callable, Literal
 
 from langgraph.graph import END, START, StateGraph
 
@@ -13,9 +15,10 @@ from ..agents.memory import MemoryAgent
 from ..knowledge.scenes import SceneLibrary
 from ..knowledge.tools import KnowledgeSearchTool, SceneSearchTool
 from ..llm import AgentModels, TextModel, as_agent_models
-from ..runtime.errors import classify_failure
+from ..runtime.errors import classify_failure, is_environment_failure
+from ..runtime.control import emit_event, redact, remaining_seconds, run_scope
 from ..runtime.runner import LocalPythonRunner
-from ..schemas import CodeValidation, OrchestratorState, RunResult, SessionRecord, TaskSpec
+from ..schemas import ChatMessage, CodeValidation, OrchestratorState, RunResult, SessionRecord, TaskSpec
 from ..storage.artifacts import ArtifactManager
 from ..storage.sessions import FileSessionStore
 
@@ -33,11 +36,23 @@ class Doc2RunOrchestrator:
         max_fix_attempts: int = 3,
         scene_tool: SceneSearchTool | None = None,
         scene_library: SceneLibrary | None = None,
+        task_timeout_seconds: float = 600.0,
+        progress_fn: Callable[[str], None] | None = None,
     ) -> None:
         if max_fix_attempts < 0:
             raise ValueError("max_fix_attempts cannot be negative")
         self.store = store
         self.max_fix_attempts = max_fix_attempts
+        if not math.isfinite(task_timeout_seconds) or task_timeout_seconds <= 0:
+            raise ValueError("task_timeout_seconds must be finite and positive")
+        self.task_timeout_seconds = task_timeout_seconds
+        self.progress_fn = progress_fn
+        self.artifacts = ArtifactManager(store)
+        model_set = as_agent_models(models)
+        self.secrets = tuple(
+            key for model in (model_set.chat, model_set.code, model_set.fix)
+            if (key := getattr(getattr(model, "settings", None), "api_key", None))
+        )
         selected_scene_library = scene_library or (
             SceneLibrary(scene_tool.source_directory)
             if scene_tool is not None and scene_tool.source_directory is not None
@@ -84,15 +99,41 @@ class Doc2RunOrchestrator:
         event: Literal["message", "confirm", "refine"],
         user_input: str = "",
     ) -> dict[str, Any]:
-        return self.graph.invoke(
-            {
-                "event": event,
-                "user_input": user_input,
-                "session": record.model_dump(mode="json"),
-                "artifact_paths": [],
-            },
-            config={"recursion_limit": 16 + self.max_fix_attempts * 8},
-        )
+        def save_event(value):
+            self.artifacts.save_event(record.session_id, value)
+            if self.progress_fn is not None:
+                self.progress_fn(f"[{value['stage']}] {value['status']}")
+
+        with run_scope(
+            self.task_timeout_seconds, save_event,
+            lambda value: self.artifacts.save_context_records(record.session_id, [value]),
+            secrets=self.secrets,
+        ):
+            started = time.monotonic()
+            emit_event(event, "started", timeout_seconds=self.task_timeout_seconds)
+            try:
+                result = self.graph.invoke(
+                    {
+                        "event": event, "user_input": user_input,
+                        "session": record.model_dump(mode="json"), "artifact_paths": [],
+                    },
+                    config={"recursion_limit": 16 + self.max_fix_attempts * 8},
+                )
+            except BaseException as error:
+                emit_event(event, "failed", duration_seconds=time.monotonic() - started,
+                           error=redact(f"{type(error).__name__}: {error}"))
+                if event == "message":
+                    # Chat's parsed update is transactional; retain failed input as history.
+                    record.messages.append(ChatMessage(role="user", content=redact(user_input)))
+                    self.store.save(record)
+                if isinstance(error, (KeyboardInterrupt, SystemExit)):
+                    raise
+                message = redact(str(error))
+                if isinstance(error, ValueError):
+                    raise ValueError(message) from None
+                raise RuntimeError(f"{event} stopped: {message}. See session events.jsonl and contexts/.") from None
+            emit_event(event, result.get("status", "completed"), duration_seconds=time.monotonic() - started)
+            return result
 
 
 def build_orchestrator_graph(
@@ -307,11 +348,13 @@ def build_orchestrator_graph(
         }
 
     def route_after_validation(state: OrchestratorState) -> Literal["execute", "fix_agent", "failed"]:
+        remaining_seconds(float("inf"))
         if state["code_validation"]["ok"]:
             return "execute"
         return "failed" if repair_budget_exhausted(state) else "fix_agent"
 
     def execute(state: OrchestratorState) -> dict[str, Any]:
+        remaining_seconds(float("inf"))
         record = SessionRecord.model_validate(state["session"])
         record.phase = "executing"
         record.status = "executing"
@@ -342,14 +385,19 @@ def build_orchestrator_graph(
         }
 
     def route_after_execute(state: OrchestratorState) -> Literal["succeeded", "fix_agent", "failed"]:
+        remaining_seconds(float("inf"))
         if state["run_result"]["ok"]:
             return "succeeded"
+        info = classify_failure(RunResult.model_validate(state["run_result"]))
+        if is_environment_failure(info, TaskSpec.model_validate(state["task_spec"])):
+            return "failed"
         return "failed" if repair_budget_exhausted(state) else "fix_agent"
 
     def repair_budget_exhausted(state: OrchestratorState) -> bool:
         return state.get("fix_attempts", 0) >= state.get("fix_attempt_limit", max_fix_attempts)
 
     def complete_success(state: OrchestratorState) -> dict[str, Any]:
+        remaining_seconds(float("inf"))
         record = _sync_record(SessionRecord.model_validate(state["session"]), state)
         record.phase = "awaiting_review"
         record.status = "awaiting_review"
@@ -372,7 +420,12 @@ def build_orchestrator_graph(
             "session": record.model_dump(mode="json"),
             "status": "failed",
             "error_info": info.model_dump(mode="json"),
-            "assistant_message": "The repair limit was reached. Review the saved run artifacts.",
+            "assistant_message": (
+                f"Execution stopped: {info.message}. Check the missing dependency/input before retrying; "
+                "no further code repair was attempted."
+                if is_environment_failure(info, TaskSpec.model_validate(state["task_spec"]))
+                else "The repair limit was reached. Review the saved run artifacts."
+            ),
         }
 
     builder = StateGraph(OrchestratorState)

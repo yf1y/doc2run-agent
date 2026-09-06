@@ -74,15 +74,19 @@ models:
 Run:
 
 ```bash
-doc2run-agent \\
-  --session my-project \\
-  --config my_project/doc2run_agent.yaml \\
+doc2run-agent \
+  --session my-project \
+  --config my_project/doc2run_agent.yaml \
   --knowledge-dir my_project/domain_knowledge
 ```
 
 If `--session` is omitted, startup shows only the saved session names: choose a number to continue one, `n` to create a new session, or `q` to exit. When there are no saved sessions, it asks for a new name directly. An existing `--session` continues directly; a new name requires confirmation before it is created.
 
 Use `/show` to inspect the TaskSpec and Scenario Plan, `/confirm` to freeze them, and `/approve` after a successful run to save the plan directly under `scenes/`. `/reset` starts a new session; `/exit` saves and exits.
+
+`--task-timeout` defaults to 600 seconds per generation/refinement, including model retries and Fix; time waiting for user input is excluded. Each Chat turn has the same processing limit. Relative session paths work, and subprocess output is decoded as UTF-8. Invalid structured replies get one format correction within the same stage. Missing packages or declared input files stop repair with an environment message; incorrect API usage can still be repaired.
+
+The project retries only transient connection/timeout errors and HTTP 408/409/429/5xx, with SDK retries disabled. The CLI displays progress; session `events.jsonl` records request attempts, timing, failures and token usage when provided. Model contexts are saved immediately on response or failure, before JSON validation. Known credentials are redacted, but context files still contain business data. A provider may finish an already accepted request after timeout; late replies cannot resume local generation or execution.
 
 ## 4. Project structure
 

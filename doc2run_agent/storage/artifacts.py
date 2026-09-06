@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .sessions import FileSessionStore
+from ..runtime.control import redact
 
 
 class ArtifactManager:
@@ -21,6 +22,13 @@ class ArtifactManager:
         directory = self.store.session_directory(session_id) / "workspace"
         directory.mkdir(parents=True, exist_ok=True)
         return directory
+
+    def save_event(self, session_id: str, event: dict[str, Any]) -> None:
+        path = self.store.session_directory(session_id) / "events.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as stream:
+            stream.write(redact(json.dumps(event, ensure_ascii=False)) + "\n")
+            stream.flush()
 
     def save_retrieval(
         self,
@@ -180,6 +188,8 @@ class ArtifactManager:
 
 
 def _context_fingerprint(record: dict[str, Any]) -> str:
+    if record.get("call_id"):
+        return str(record["call_id"])
     value = "\0".join(
         str(record.get(field, ""))
         for field in ("stage", "system_prompt", "user_prompt", "response")
@@ -205,6 +215,7 @@ def _context_manifest(record: dict[str, Any], index: int) -> dict[str, Any]:
         "stage": record["stage"],
         "estimated_tokens": record["estimated_tokens"],
         "sources": list(record.get("sources", [])),
+        **{key: record[key] for key in ("call_id", "started_at", "duration_seconds", "status", "error") if key in record},
     }
 
 
@@ -212,6 +223,9 @@ def _context_markdown(record: dict[str, Any]) -> str:
     return (
         f"# {record['stage']}\n\n"
         f"Estimated input tokens: {record['estimated_tokens']}\n\n"
+        f"Status: {record.get('status', 'succeeded')}\n\n"
+        f"Duration: {record.get('duration_seconds', 0):.3f} seconds\n\n"
+        f"Error: {record.get('error', '')}\n\n"
         "## System prompt\n\n"
         + _fenced(str(record["system_prompt"]), "text")
         + "\n\n## User prompt\n\n"

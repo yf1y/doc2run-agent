@@ -16,6 +16,7 @@ from .runtime.runner import LocalPythonRunner
 from .schemas import SessionRecord
 from .storage.sessions import FileSessionStore
 from .workflow.orchestrator import Doc2RunOrchestrator
+from .runtime.control import redact
 
 
 HELP_TEXT = """Commands:
@@ -52,6 +53,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-fix-attempts", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument("--task-timeout", type=float, default=600.0,
+                        help="Total seconds for one generation/refinement (including model retries and Fix)")
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument(
         "--runtime-env",
@@ -76,7 +79,13 @@ def main(argv: list[str] | None = None) -> None:
             parser.error(str(error))
     if session_id is None:
         return
-    with create_agent_models(load_agent_model_settings(args.config)) as models:
+    try:
+        settings = load_agent_model_settings(args.config)
+        print("[models] initializing")
+        models = create_agent_models(settings)
+    except (ValueError, RuntimeError) as error:
+        parser.exit(2, f"Model setup failed: {redact(str(error))}\n")
+    with models:
         run_chat(
             models,
             session_id=session_id,
@@ -86,6 +95,7 @@ def main(argv: list[str] | None = None) -> None:
             timeout_seconds=args.timeout,
             top_k=args.top_k,
             runtime_environment=args.runtime_env,
+            task_timeout_seconds=args.task_timeout,
         )
 
 
@@ -186,6 +196,7 @@ def run_chat(
     timeout_seconds: float = 10.0,
     top_k: int = 5,
     runtime_environment: tuple[str, ...] | list[str] = (),
+    task_timeout_seconds: float = 600.0,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], None] = print,
 ) -> None:
@@ -225,6 +236,8 @@ def run_chat(
         max_fix_attempts=max_fix_attempts,
         scene_tool=scene_tool,
         scene_library=scene_library,
+        task_timeout_seconds=task_timeout_seconds,
+        progress_fn=output_fn,
     )
     record = store.load_or_create(session_id)
     output_fn(
@@ -281,6 +294,9 @@ def run_chat(
                 result = orchestrator.approve(session_id, value[len("/approve") :].strip())
             else:
                 result = orchestrator.handle_message(session_id, value)
+        except KeyboardInterrupt:
+            output_fn("\nOperation interrupted; diagnostics saved. Enter /exit or review the session before retrying.")
+            continue
         except (ValueError, RuntimeError) as error:
             output_fn(f"error: {error}")
             continue

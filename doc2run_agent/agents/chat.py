@@ -14,8 +14,7 @@ from ..schemas import (
     SessionRecord,
     TaskSpec,
 )
-from .context import complete_and_record
-from .parsing import parse_model
+from .parsing import complete_structured
 from .prompts import CHAT_SYSTEM, chat_request
 
 
@@ -68,16 +67,16 @@ class ChatAgent:
             selected_scene=record.selected_scene,
             scenario_plan=record.draft_plan,
         )
-        response, context_records = complete_and_record(
-            self.model,
+        decision, context_records = complete_structured(
+            self.model, ChatDecision,
             stage="chat",
             system_prompt=CHAT_SYSTEM,
             user_prompt=user_prompt,
             sources=(
                 [str(record.selected_scene["source"])] if record.selected_scene else []
             ),
+            validate=lambda decision: apply_spec_patch(record.draft_spec, decision.spec_patch),
         )
-        decision = parse_model(response, ChatDecision)
         record.draft_spec = apply_spec_patch(record.draft_spec, decision.spec_patch)
         record.confirmed_sections = _merge_confirmed_sections(
             record.confirmed_sections,

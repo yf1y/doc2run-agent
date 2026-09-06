@@ -18,8 +18,8 @@ from ..schemas import (
     RunResult,
     TaskSpec,
 )
-from .context import complete_and_record, context_sources, merge_context
-from .parsing import parse_model
+from .context import context_sources, merge_context
+from .parsing import complete_structured
 from .prompts import (
     FIX_PLAN_SYSTEM,
     REFINEMENT_PLAN_SYSTEM,
@@ -49,7 +49,7 @@ def build_fix_agent_graph(
         validation = CodeValidation.model_validate(state["code_validation"])
         run_result = (
             RunResult.model_validate(state["run_result"])
-            if state.get("run_result") is not None
+            if state.get("run_result")
             else None
         )
         info = classify_failure(run_result, validation)
@@ -63,14 +63,13 @@ def build_fix_agent_graph(
             state["error_info"],
             state.get("run_result", {}),
         )
-        response, records = complete_and_record(
-            model,
+        plan, records = complete_structured(
+            model, FixPlan,
             stage="user_refinement_plan" if state.get("user_instruction") else "fix_plan",
             system_prompt=REFINEMENT_PLAN_SYSTEM if state.get("user_instruction") else FIX_PLAN_SYSTEM,
             user_prompt=prompt,
             current=state.get("context_records"),
         )
-        plan = parse_model(response, FixPlan)
         compatible = not state.get("user_instruction") or plan.contract_compatible
         return {
             "fix_plan": plan.model_dump(mode="json"),
@@ -101,15 +100,14 @@ def build_fix_agent_graph(
             state["code"],
             attempt,
         )
-        response, records = complete_and_record(
-            model,
+        patch, records = complete_structured(
+            model, CodePatch,
             stage=f"fix_patch_{attempt:03d}",
             system_prompt=PATCH_SYSTEM,
             user_prompt=prompt,
             current=state.get("context_records"),
             sources=context_sources(api_context, prompt),
         )
-        patch = parse_model(response, CodePatch)
         return {
             "code_patch": patch.model_dump(mode="json"),
             "previous_code": state["code"],
@@ -137,15 +135,14 @@ def build_fix_agent_graph(
             state.get("patch_error", ""),
             api_context,
         )
-        response, records = complete_and_record(
-            model,
+        review, records = complete_structured(
+            model, PatchReview,
             stage=f"fix_review_{state['fix_attempts']:03d}",
             system_prompt=PATCH_REVIEW_SYSTEM,
             user_prompt=prompt,
             current=state.get("context_records"),
             sources=context_sources(api_context, prompt),
         )
-        review = parse_model(response, PatchReview)
         return {"patch_review": review.model_dump(mode="json"), "context_records": records}
 
     def validate(state: OrchestratorState) -> dict[str, object]:

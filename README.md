@@ -160,6 +160,8 @@ doc2run-agent \
 
 代码成功运行后仍可继续用自然语言要求修改；满意后再输入 `/approve`。如果补充了 API/Scene 文档，下一次 `/confirm` 或修改请求会刷新知识索引。
 
+一次生成或修改默认最多处理 600 秒，可通过 `--task-timeout` 调整，覆盖模型重试及自动 Fix。JSON 格式错误允许在原阶段纠正一次；确认缺依赖包或已声明输入文件时停止修复并提示处理环境。CLI 显示进度，请求失败也立即保存日志。网络重试由项目限次控制，不与底层 SDK 叠加。
+
 ### 3.5 Scene 沉淀和安全边界
 
 `/approve` 只保存确认后的场景方案 Markdown，不保存 API 签名、import、源码、凭证、报错或修复过程。后续会话从 `scenes/` 重新选择一个 Scene。
@@ -171,6 +173,7 @@ doc2run-agent \
 ```text
 sessions/<session-id>/
 ├── session.json                 # 对话和当前阶段
+├── events.jsonl                 # 请求/重试、阶段进度、耗时和异常
 ├── decisions.md                 # 用户确认和纠正
 ├── task_specs/                  # 已确认的需求版本
 ├── retrieval/                   # 每轮文档检索结果

@@ -10,7 +10,7 @@ from ..runtime.runner import sanitize_code
 from ..runtime.validation import validate_code
 from ..schemas import OrchestratorState, RetrievalQueryPlan, TaskSpec
 from .context import complete_and_record, context_sources
-from .parsing import parse_model
+from .parsing import complete_structured
 from .prompts import CODE_SYSTEM, RETRIEVAL_PLAN_SYSTEM, code_request, retrieval_plan_request
 
 
@@ -24,14 +24,13 @@ def build_code_agent_graph(
         prompt = retrieval_plan_request(
             state["task_spec"], state.get("scenario_plan", ""), state.get("decisions", [])
         )
-        response, records = complete_and_record(
-            model,
+        plan, records = complete_structured(
+            model, RetrievalQueryPlan,
             stage="api_retrieval_plan",
             system_prompt=RETRIEVAL_PLAN_SYSTEM,
             user_prompt=prompt,
             current=state.get("context_records"),
         )
-        plan = parse_model(response, RetrievalQueryPlan)
         return {
             "retrieval_queries": plan.queries,
             "context_records": records,

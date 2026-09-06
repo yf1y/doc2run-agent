@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import math
 import re
 import subprocess
 import sys
@@ -12,6 +13,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from ..schemas import RunResult
+from .control import emit_event, remaining_seconds
 
 
 def sanitize_code(value: str) -> str:
@@ -34,7 +36,7 @@ class LocalPythonRunner:
         *,
         environment_keys: Iterable[str] = (),
     ) -> None:
-        if timeout_seconds <= 0:
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         self.timeout_seconds = timeout_seconds
         self.environment_keys = _validate_environment_keys(environment_keys)
@@ -45,11 +47,13 @@ class LocalPythonRunner:
         if working_directory is None:
             with tempfile.TemporaryDirectory(prefix="doc2run-agent-") as temporary:
                 return self._run_in_directory(clean_code, Path(temporary), started)
-        directory = Path(working_directory)
+        directory = Path(working_directory).resolve()
         directory.mkdir(parents=True, exist_ok=True)
         return self._run_in_directory(clean_code, directory, started)
 
     def _run_in_directory(self, code: str, directory: Path, started: float) -> RunResult:
+        timeout = remaining_seconds(self.timeout_seconds)
+        emit_event("execution", "started", timeout_seconds=timeout)
         script = directory / "generated.py"
         script.write_text(code, encoding="utf-8")
         try:
@@ -58,20 +62,26 @@ class LocalPythonRunner:
                 cwd=directory,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout_seconds,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
                 env=_safe_environment(self.environment_keys),
                 check=False,
             )
         except subprocess.TimeoutExpired as error:
+            emit_event("execution", "failed", duration_seconds=time.monotonic() - started,
+                       error="Execution timeout")
             return RunResult(
                 ok=False,
                 returncode=124,
                 stdout=_timeout_text(error.stdout),
-                stderr=f"Execution exceeded {self.timeout_seconds:g} seconds",
+                stderr=f"Execution exceeded {timeout:g} seconds",
                 timed_out=True,
                 duration_seconds=time.monotonic() - started,
             )
 
+        emit_event("execution", "succeeded" if process.returncode == 0 else "failed",
+                   duration_seconds=time.monotonic() - started, returncode=process.returncode)
         return RunResult(
             ok=process.returncode == 0,
             returncode=process.returncode,

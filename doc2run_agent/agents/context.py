@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import math
+import time
+from uuid import uuid4
 from typing import Any
 
 from ..llm import TextModel
-from ..schemas import ModelContextRecord
+from ..schemas import ModelContextRecord, utc_now
+from ..runtime.control import call_with_timeout, emit_event, redact, save_context
 
 
 def estimate_tokens(text: str) -> int:
@@ -47,17 +50,40 @@ def complete_and_record(
             f"configured {input_limit}-token input budget after reserving "
             f"{output_reserve} output tokens"
         )
-    response = model.complete(system_prompt, user_prompt)
     record = ModelContextRecord(
         stage=stage,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        response=response,
+        response="",
         estimated_tokens=input_tokens,
         sources=sources or [],
+        call_id=uuid4().hex,
+        started_at=utc_now(),
     )
+    started = time.monotonic()
+    emit_event(stage, "started", call_id=record.call_id)
+    try:
+        # Bound the whole logical call, including the provider's finite retry loop.
+        timeout = float(getattr(settings, "timeout_seconds", 120))
+        retries = int(getattr(settings, "max_retries", 0))
+        response = call_with_timeout(
+            lambda: model.complete(system_prompt, user_prompt), timeout * (retries + 1) + retries * 2
+        )
+        record.response = response
+    except BaseException as error:
+        record.status = "failed"
+        record.error = redact(f"{type(error).__name__}: {error}")
+        raise
+    finally:
+        record.duration_seconds = time.monotonic() - started
+        value = record.model_dump(mode="json")
+        for key in ("system_prompt", "user_prompt", "response", "error"):
+            value[key] = redact(value[key])
+        save_context(value)
+        emit_event(stage, record.status, call_id=record.call_id,
+                   duration_seconds=record.duration_seconds, error=record.error)
     values = list(current or [])
-    values.append(record.model_dump(mode="json"))
+    values.append(value)
     return response, values
 
 

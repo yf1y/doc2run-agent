@@ -72,7 +72,7 @@ def test_chat_agent_rejects_unknown_spec_fields():
     )
 
     with pytest.raises(ValueError, match="unknown TaskSpec fields"):
-        ChatAgent(FakeModel([response])).process(
+        ChatAgent(FakeModel([response, response])).process(
             SessionRecord(session_id="demo"),
             "Do work",
         )

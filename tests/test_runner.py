@@ -64,3 +64,17 @@ def test_runner_rejects_invalid_runtime_environment_name():
 
 def test_sanitize_code_removes_markdown_fence():
     assert sanitize_code("```python\nprint('ok')\n```") == "print('ok')\n"
+
+
+def test_runner_handles_relative_workspace(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = LocalPythonRunner().run("print('relative-ok')", "sessions/demo/workspace")
+    assert result.ok
+    assert result.stdout.strip() == "relative-ok"
+    assert (tmp_path / "sessions/demo/workspace/generated.py").is_file()
+
+
+def test_runner_decodes_chinese_as_utf8(tmp_path):
+    result = LocalPythonRunner().run("print('节点、连接、输出')", tmp_path)
+    assert result.ok
+    assert result.stdout.strip() == "节点、连接、输出"
