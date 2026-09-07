@@ -62,6 +62,17 @@ def test_runner_rejects_invalid_runtime_environment_name():
         LocalPythonRunner(environment_keys=["SDK_TOKEN=unexpected"])
 
 
+def test_safe_environment_preserves_windows_startup_without_copying_secrets(monkeypatch):
+    from doc2run_agent.runtime.runner import _safe_environment
+
+    monkeypatch.setenv("SYSTEMROOT", "C:\\Windows")
+    monkeypatch.setenv("UNLISTED_SECRET", "must-not-leak")
+    environment = _safe_environment()
+
+    assert environment["SYSTEMROOT"] == "C:\\Windows"
+    assert "UNLISTED_SECRET" not in environment
+
+
 def test_sanitize_code_removes_markdown_fence():
     assert sanitize_code("```python\nprint('ok')\n```") == "print('ok')\n"
 

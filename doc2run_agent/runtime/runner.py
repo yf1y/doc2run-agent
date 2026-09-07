@@ -93,7 +93,10 @@ class LocalPythonRunner:
 
 
 def _safe_environment(environment_keys: Iterable[str] = ()) -> dict[str, str]:
-    allowed = {key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL") if key in os.environ}
+    # Windows needs SYSTEMROOT to load system DLLs during Python startup.
+    allowed = {
+        key: os.environ[key] for key in ("PATH", "LANG", "LC_ALL", "SYSTEMROOT") if key in os.environ
+    }
     allowed.update(
         {key: os.environ[key] for key in environment_keys if key in os.environ}
     )
